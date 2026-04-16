@@ -6,7 +6,7 @@ import urllib.robotparser
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -76,6 +76,28 @@ class Scraper:
 
         return self._robots_cache[base].can_fetch(self._user_agent, url)
 
+    def _fandom_api_url(self, url: str) -> tuple[str, str] | None:
+        """If `url` is a Fandom wiki page, return (api_url, page_title).
+
+        Fandom sits behind Cloudflare bot protection that 403s direct /wiki/
+        requests, but the MediaWiki API at /api.php responds normally to a
+        plain User-Agent header. We rewrite fetches transparently; the
+        caller still sees the original /wiki/ URL as the canonical source.
+        """
+        parsed = urlparse(url)
+        if not parsed.netloc.endswith(".fandom.com"):
+            return None
+        if not parsed.path.startswith("/wiki/"):
+            return None
+        page_title = parsed.path[len("/wiki/"):]
+        encoded = quote(unquote(page_title), safe="")
+        api_url = (
+            f"{parsed.scheme}://{parsed.netloc}/api.php"
+            f"?action=parse&page={encoded}&format=json&prop=text"
+            f"&redirects=1&formatversion=2"
+        )
+        return api_url, unquote(page_title).replace("_", " ")
+
     def _extract_text(self, html: str, url: str) -> tuple[str, str]:
         """Return (title, cleaned_text) from raw HTML."""
         parser = HTMLParser(html)
@@ -125,19 +147,47 @@ class Scraper:
         if self._crawl_delay > 0:
             await asyncio.sleep(self._crawl_delay)
 
+        fandom_info = self._fandom_api_url(url)
+        fetch_url = fandom_info[0] if fandom_info else url
+
         try:
             async with httpx.AsyncClient(
                 timeout=30.0,
                 headers={"User-Agent": self._user_agent},
                 follow_redirects=True,
             ) as client:
-                response = await client.get(url)
+                response = await client.get(fetch_url)
                 response.raise_for_status()
-                html = response.text
+                body = response.text
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
             logger.warning("Failed to fetch %s: %s", url, exc)
             return None
 
+        api_title: str | None = None
+        if fandom_info:
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError as exc:
+                logger.warning("MediaWiki API returned non-JSON for %s: %s", url, exc)
+                return None
+            if isinstance(data, dict) and "error" in data:
+                err = data["error"]
+                logger.warning(
+                    "MediaWiki API error for %s: code=%s info=%r",
+                    url, err.get("code"), err.get("info"),
+                )
+                return None
+            try:
+                html = data["parse"]["text"]
+                api_title = data["parse"].get("title")
+            except (KeyError, TypeError) as exc:
+                logger.warning("Unexpected MediaWiki API response shape for %s: %s", url, exc)
+                return None
+        else:
+            html = body
+
         self._save_to_cache(url, html)
         title, text = self._extract_text(html, url)
+        if not title and api_title:
+            title = api_title
         return ScrapedPage(url=url, text=text, title=title, fetched_at=datetime.now(UTC))

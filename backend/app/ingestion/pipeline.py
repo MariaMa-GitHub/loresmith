@@ -45,7 +45,9 @@ async def run_ingestion(
     for url in urls:
         page = await scraper.fetch(url)
         if page is None:
-            logger.info("Skipped (disallowed): %s", url)
+            # Reason (robots.txt / API error / non-JSON / shape mismatch) is
+            # already logged by the scraper at WARNING level.
+            logger.info("Skipped: %s", url)
             continue
         pages_fetched += 1
         chunks = chunker.chunk(page.text, url, title=page.title)

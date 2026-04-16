@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,12 +32,16 @@ async def test_scraper_fetch_returns_none_if_disallowed(tmp_path):
 
 @pytest.mark.asyncio
 async def test_scraper_fetch_parses_html(tmp_path):
-    html = """<html><head><title>Zagreus</title></head>
-    <body><div class="mw-parser-output"><p>Zagreus is the son of Hades.</p></div></body></html>"""
+    # Fandom URLs are fetched via the MediaWiki API (Cloudflare blocks direct
+    # /wiki/ requests), so the mocked response mirrors the api.php envelope.
+    api_html = (
+        '<div class="mw-parser-output"><p>Zagreus is the son of Hades.</p></div>'
+    )
+    api_body = json.dumps({"parse": {"title": "Zagreus", "text": api_html}})
 
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.text = html
+    mock_response.text = api_body
     mock_response.raise_for_status = MagicMock()
 
     scraper = Scraper(cache_dir=tmp_path, crawl_delay=0)
@@ -58,11 +63,12 @@ async def test_scraper_fetch_parses_html(tmp_path):
 
 @pytest.mark.asyncio
 async def test_scraper_uses_cache_on_second_fetch(tmp_path):
-    html = "<html><body><div class='mw-parser-output'><p>Cached content.</p></div></body></html>"
+    api_html = "<div class='mw-parser-output'><p>Cached content.</p></div>"
+    api_body = json.dumps({"parse": {"title": "Nyx", "text": api_html}})
 
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.text = html
+    mock_response.text = api_body
     mock_response.raise_for_status = MagicMock()
 
     scraper = Scraper(cache_dir=tmp_path, crawl_delay=0)

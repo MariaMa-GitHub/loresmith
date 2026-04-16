@@ -34,3 +34,6 @@ Thumbs.db
 
 # Project-specific
 BTS.md
+.scraper_cache/
+.claude/
+CLAUDE.md

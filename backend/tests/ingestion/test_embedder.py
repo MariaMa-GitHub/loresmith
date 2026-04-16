@@ -71,7 +71,7 @@ async def test_embedder_splits_into_batches_at_boundary():
         mock_client.aio.models.embed_content = mock_embed
         mock_client_cls.return_value = mock_client
 
-        embedder = Embedder(api_key="test-key")
+        embedder = Embedder(api_key="test-key", inter_batch_delay_seconds=0)
         results = await embedder.embed([f"text {i}" for i in range(51)])
 
     assert len(results) == 51
