@@ -47,11 +47,15 @@ class GeminiProvider:
     ) -> AsyncIterator[str]:
         contents = _to_gemini_contents(messages)
         cfg = types.GenerateContentConfig(system_instruction=system) if system else None
-        async for chunk in self._client.aio.models.generate_content_stream(
+        # `aio.models.generate_content_stream` is a coroutine that resolves to
+        # an AsyncIterator — must be awaited before iterating, unlike the sync
+        # client which returns the iterator directly.
+        stream = await self._client.aio.models.generate_content_stream(
             model=self.model_name,
             contents=contents,
             config=cfg,
-        ):
+        )
+        async for chunk in stream:
             if chunk.text:
                 yield chunk.text
 

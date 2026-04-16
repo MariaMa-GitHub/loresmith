@@ -64,15 +64,21 @@ async def test_gemini_complete_with_system_prompt():
 
 @pytest.mark.asyncio
 async def test_gemini_stream_yields_chunks():
-    async def fake_stream(*args, **kwargs):
+    # The real google-genai async client returns a coroutine that resolves to
+    # an AsyncIterator — mock it the same way so the adapter's `await … ;
+    # async for …` pattern is exercised.
+    async def fake_async_iter():
         for text in ["chunk1", " chunk2"]:
             chunk = MagicMock()
             chunk.text = text
             yield chunk
 
+    async def fake_stream_coro(*args, **kwargs):
+        return fake_async_iter()
+
     with patch("app.llm.gemini.genai.Client") as mock_client_cls:
         mock_client = MagicMock()
-        mock_client.aio.models.generate_content_stream = fake_stream
+        mock_client.aio.models.generate_content_stream = fake_stream_coro
         mock_client_cls.return_value = mock_client
 
         provider = GeminiProvider(api_key="test")
