@@ -1,14 +1,13 @@
 from app.db.models import (
-    Base,
-    Passage,
-    Entity,
-    ChatSession,
     ChatMessage,
-    SharedThread,
-    SemanticCache,
+    ChatSession,
+    Entity,
     EvalRun,
-    UserFeedback,
+    Passage,
     QueryLog,
+    SemanticCache,
+    SharedThread,
+    UserFeedback,
 )
 
 

@@ -1,5 +1,6 @@
+from collections.abc import AsyncIterator
 from enum import StrEnum
-from typing import AsyncIterator, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 class TaskType(StrEnum):

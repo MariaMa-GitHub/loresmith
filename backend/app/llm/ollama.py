@@ -1,9 +1,7 @@
 import json
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
-
-from app.llm.base import LLMProvider
 
 
 class OllamaProvider:

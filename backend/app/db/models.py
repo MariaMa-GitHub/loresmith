@@ -18,7 +18,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-EMBEDDING_DIM = 768  # text-embedding-004 (primary, native 768d); local fallback must also be 768d (use bge-base-en, not bge-small-en which is 384d)
+# text-embedding-004 (primary, native 768d); local fallback must also be 768d.
+# Use bge-base-en, NOT bge-small-en (which is 384d).
+EMBEDDING_DIM = 768
 
 
 class Base(DeclarativeBase):
