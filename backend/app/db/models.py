@@ -34,7 +34,7 @@ class Passage(Base):
     game_slug: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     spoiler_tier: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     embedding: Mapped[Any] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -1,0 +1,153 @@
+"""Ingestion pipeline CLI.
+
+Usage:
+    python -m app.ingestion.pipeline --game hades
+    python -m app.ingestion.pipeline --game hades --dry-run
+"""
+import argparse
+import asyncio
+import logging
+from dataclasses import dataclass
+
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.adapters.base import GameAdapter
+from app.db.models import Passage
+from app.ingestion.chunker import Chunker
+from app.ingestion.embedder import Embedder
+from app.ingestion.scraper import Scraper
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class IngestResult:
+    game_slug: str
+    pages_fetched: int
+    chunks_created: int
+    passages_upserted: int
+    passages_skipped: int
+
+
+async def run_ingestion(
+    adapter: GameAdapter,
+    scraper: Scraper,
+    chunker: Chunker,
+    embedder: Embedder,
+    session: AsyncSession,
+    dry_run: bool = False,
+) -> IngestResult:
+    urls = adapter.get_article_urls()
+    pages_fetched = 0
+    all_chunks = []
+
+    for url in urls:
+        page = await scraper.fetch(url)
+        if page is None:
+            logger.info("Skipped (disallowed): %s", url)
+            continue
+        pages_fetched += 1
+        chunks = chunker.chunk(page.text, url, title=page.title)
+        all_chunks.extend(chunks)
+
+    if not all_chunks:
+        return IngestResult(
+            game_slug=adapter.slug,
+            pages_fetched=pages_fetched,
+            chunks_created=0,
+            passages_upserted=0,
+            passages_skipped=0,
+        )
+
+    texts = [c.content for c in all_chunks]
+    embeddings = await embedder.embed(texts)
+
+    passages_upserted = 0
+    # passages_skipped: ON CONFLICT DO UPDATE touches every conflicting row so
+    # we cannot distinguish new inserts from no-op updates without a second
+    # query. Tracking skipped passages is deferred to Week 3+ integration tests.
+    passages_skipped = 0
+
+    if not dry_run:
+        rows = [
+            {
+                "game_slug": adapter.slug,
+                "source_url": chunk.source_url,
+                "content": chunk.content,
+                "content_hash": chunk.content_hash,
+                "spoiler_tier": 0,
+                "embedding": embedding,
+            }
+            for chunk, embedding in zip(all_chunks, embeddings)
+        ]
+
+        stmt = pg_insert(Passage).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_passages_content_hash",
+            set_={
+                "source_url": stmt.excluded.source_url,
+                "updated_at": stmt.excluded.updated_at,
+            },
+        )
+        await session.execute(stmt)
+        await session.commit()
+        passages_upserted = len(rows)
+
+    return IngestResult(
+        game_slug=adapter.slug,
+        pages_fetched=pages_fetched,
+        chunks_created=len(all_chunks),
+        passages_upserted=passages_upserted,
+        passages_skipped=passages_skipped,
+    )
+
+
+async def _main(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from app.adapters.hades import HadesAdapter
+    from app.config import get_settings
+    from app.db.session import get_session_factory
+
+    settings = get_settings()
+
+    adapter_map = {
+        "hades": HadesAdapter,
+    }
+
+    if args.game not in adapter_map:
+        raise SystemExit(f"Unknown game: {args.game}")
+
+    adapter = adapter_map[args.game]()
+    scraper = Scraper(
+        cache_dir=Path(".scraper_cache") / args.game,
+        crawl_delay=adapter.sources[0].crawl_delay,
+    )
+    chunker = Chunker(chunk_size=adapter.chunk_size, overlap=adapter.chunk_overlap)
+    embedder = Embedder(api_key=settings.gemini_api_key)
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await run_ingestion(
+            adapter=adapter,
+            scraper=scraper,
+            chunker=chunker,
+            embedder=embedder,
+            session=session,
+            dry_run=args.dry_run,
+        )
+
+    print(f"Game:              {result.game_slug}")
+    print(f"Pages fetched:     {result.pages_fetched}")
+    print(f"Chunks created:    {result.chunks_created}")
+    print(f"Passages upserted: {result.passages_upserted}")
+    print(f"Dry run:           {args.dry_run}")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    parser = argparse.ArgumentParser(description="Loresmith ingestion pipeline")
+    parser.add_argument("--game", required=True, choices=["hades"], help="Game slug to ingest")
+    parser.add_argument("--dry-run", action="store_true", help="Skip DB writes")
+    asyncio.run(_main(parser.parse_args()))
