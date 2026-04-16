@@ -1,0 +1,42 @@
+from app.db.models import (
+    Base,
+    Passage,
+    Entity,
+    ChatSession,
+    ChatMessage,
+    SharedThread,
+    SemanticCache,
+    EvalRun,
+    UserFeedback,
+    QueryLog,
+)
+
+
+def test_all_models_have_tablename():
+    for model in [Passage, Entity, ChatSession, ChatMessage,
+                  SharedThread, SemanticCache, EvalRun, UserFeedback, QueryLog]:
+        assert hasattr(model, "__tablename__")
+
+
+def test_passage_has_embedding_column():
+    cols = {c.key for c in Passage.__table__.columns}
+    assert "embedding" in cols
+    assert "game_slug" in cols
+    assert "content_hash" in cols
+    assert "spoiler_tier" in cols
+
+
+def test_semantic_cache_has_embedding_column():
+    cols = {c.key for c in SemanticCache.__table__.columns}
+    assert "query_embedding" in cols
+    assert "game_slug" in cols
+
+
+def test_chat_message_references_chat_session():
+    fks = {fk.column.table.name for fk in ChatMessage.__table__.foreign_keys}
+    assert "chat_sessions" in fks
+
+
+def test_shared_thread_has_slug_pk():
+    pk_cols = [c.key for c in SharedThread.__table__.primary_key.columns]
+    assert "slug" in pk_cols
