@@ -5,7 +5,7 @@ from app.ingestion.chunker import Chunk, Chunker
 
 def test_chunk_has_content_hash():
     c = Chunk(content="hello world", source_url="https://example.com", title="Test")
-    assert c.content_hash == hashlib.sha256("hello world".encode()).hexdigest()
+    assert c.content_hash == hashlib.sha256(b"hello world").hexdigest()
 
 
 def test_chunker_short_text_yields_one_chunk():
