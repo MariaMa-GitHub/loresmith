@@ -13,12 +13,38 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.base import GameAdapter
+from app.config import Settings
 from app.db.models import Passage
 from app.ingestion.chunker import Chunker
-from app.ingestion.embedder import Embedder
+from app.ingestion.embedder import GeminiEmbedder
+from app.ingestion.local_embedder import LocalEmbedder
 from app.ingestion.scraper import Scraper
 
 logger = logging.getLogger(__name__)
+
+# Duck-typed: anything with `async def embed(texts) -> list[list[float]]` works.
+Embedder = GeminiEmbedder | LocalEmbedder
+
+
+def make_embedder(settings: Settings) -> Embedder:
+    """Pick an embedder implementation based on settings.embedding_backend.
+
+    - local (default): bge-base-en-v1.5 on CPU, free, no quotas.
+    - gemini: gemini-embedding-001 @ 768d, requires GEMINI_API_KEY, free-tier
+      rate limits apply.
+    """
+    backend = settings.embedding_backend.lower()
+    if backend == "local":
+        return LocalEmbedder(model_name=settings.local_embedding_model)
+    if backend == "gemini":
+        if not settings.gemini_api_key:
+            raise RuntimeError(
+                "embedding_backend=gemini requires GEMINI_API_KEY to be set."
+            )
+        return GeminiEmbedder(api_key=settings.gemini_api_key)
+    raise ValueError(
+        f"Unknown embedding_backend={backend!r}; expected 'local' or 'gemini'."
+    )
 
 
 @dataclass
@@ -127,7 +153,8 @@ async def _main(args: argparse.Namespace) -> None:
         crawl_delay=adapter.sources[0].crawl_delay,
     )
     chunker = Chunker(chunk_size=adapter.chunk_size, overlap=adapter.chunk_overlap)
-    embedder = Embedder(api_key=settings.gemini_api_key)
+    embedder = make_embedder(settings)
+    logger.info("Using %s as embedding backend", type(embedder).__name__)
 
     session_factory = get_session_factory()
     async with session_factory() as session:

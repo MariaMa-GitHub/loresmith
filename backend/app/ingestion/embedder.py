@@ -43,10 +43,14 @@ def _is_transient(exc: BaseException) -> bool:
     return "RESOURCE_EXHAUSTED" in msg or "UNAVAILABLE" in msg
 
 
-class Embedder:
+class GeminiEmbedder:
     """Generates 768-dimensional embeddings using gemini-embedding-001.
 
     Pass api_key=None to use the GOOGLE_API_KEY environment variable.
+
+    Optional backend — requires a Google AI Studio API key and counts against
+    Gemini free-tier RPM quotas. Loresmith defaults to LocalEmbedder; set
+    EMBEDDING_BACKEND=gemini to switch to this one.
     """
 
     def __init__(

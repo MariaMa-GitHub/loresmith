@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     llm_backend: str = "gemini"  # gemini | ollama | auto
 
+    # Embeddings
+    embedding_backend: str = "local"  # local | gemini
+    local_embedding_model: str = "BAAI/bge-base-en-v1.5"  # 768d, matches EMBEDDING_DIM
+
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
     ollama_strong_model: str = "qwen2.5:7b"

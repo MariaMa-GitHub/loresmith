@@ -18,9 +18,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-# gemini-embedding-001 @ 768d via Matryoshka truncation (primary); local fallback
-# must also emit 768d unit-norm vectors (bge-base-en works; bge-small-en is 384d).
-# Use bge-base-en, NOT bge-small-en (which is 384d).
+# Primary embedder: local bge-base-en-v1.5 (768d, L2-normalized). Optional
+# gemini-embedding-001 backend truncates from 3072d → 768d via Matryoshka and
+# L2-normalizes client-side. Do NOT swap for bge-small-en (384d) or any other
+# non-768 model without a corresponding Alembic migration on Passage.embedding.
 EMBEDDING_DIM = 768
 
 
