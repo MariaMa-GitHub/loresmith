@@ -5,6 +5,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.rag.rewriter import QueryRewriter
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.dense import DenseRetriever
 from app.retrieval.hybrid import rrf_fuse
@@ -36,6 +37,7 @@ class RAGPipeline:
         game_display_name: str,
         tracer=None,
         bm25_source_map: dict[int, str] | None = None,
+        rewriter: QueryRewriter | None = None,
     ) -> None:
         self._embedder = embedder
         self._bm25 = bm25_index
@@ -45,6 +47,7 @@ class RAGPipeline:
         self._game_display_name = game_display_name
         self._tracer = tracer or noop_tracer()
         self._bm25_source_map = bm25_source_map or {}
+        self._rewriter = rewriter
 
     async def _retrieve(
         self,
@@ -107,8 +110,11 @@ class RAGPipeline:
         history: list[dict] | None = None,
     ) -> AsyncIterator[str]:
         """Retrieve context, build prompt, and stream the LLM response."""
-        passages = await self._retrieve(session, question, max_spoiler_tier)
-        prompt = self._build_prompt(question, passages)
+        effective_question = question
+        if self._rewriter and history:
+            effective_question = await self._rewriter.rewrite(question, history)
+        passages = await self._retrieve(session, effective_question, max_spoiler_tier)
+        prompt = self._build_prompt(effective_question, passages)
         messages = [{"role": "user", "content": prompt}]
 
         with self._tracer.trace(

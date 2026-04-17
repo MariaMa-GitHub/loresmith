@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -9,13 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import Settings, get_settings
-from app.db.models import Passage
+from app.db.models import ChatMessage, ChatSession, Passage
 from app.db.session import get_session_factory
 from app.ingestion.pipeline import Embedder, make_embedder
 from app.llm.gemini import GeminiProvider
 from app.rag.pipeline import RAGPipeline
+from app.rag.rewriter import QueryRewriter
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.dense import DenseRetriever
 from app.tracing.langfuse import LangfuseTracer
@@ -35,6 +38,7 @@ class _Services:
     embedder: Embedder
     dense: DenseRetriever
     llm: GeminiProvider
+    fast_llm: GeminiProvider
 
 
 def _build_services() -> _Services:
@@ -49,6 +53,10 @@ def _build_services() -> _Services:
         embedder=make_embedder(settings),
         dense=DenseRetriever(),
         llm=GeminiProvider(api_key=settings.gemini_api_key),
+        fast_llm=GeminiProvider(
+            api_key=settings.gemini_api_key,
+            model_name="gemini-2.5-flash-lite",
+        ),
     )
 
 
@@ -99,6 +107,7 @@ async def _get_pipeline(session, game_slug: str) -> RAGPipeline:
                 game_display_name=_GAME_DISPLAY[game_slug],
                 tracer=svc.tracer,
                 bm25_source_map=source_map,
+                rewriter=QueryRewriter(llm=svc.fast_llm),
             )
     return pipelines[game_slug]
 
@@ -130,6 +139,7 @@ class ChatRequest(BaseModel):
     question: str
     spoiler_tier: int = 0
     session_id: str | None = None
+    history: list[dict[str, str]] | None = None
 
 
 @app.get("/healthz")
@@ -148,15 +158,37 @@ async def chat(req: ChatRequest):
         raise HTTPException(status_code=404, detail=f"Game '{req.game}' not found")
 
     async def event_stream() -> AsyncIterator[str]:
+        session_id = req.session_id or str(uuid.uuid4())
         session_factory = get_session_factory()
+        collected: list[str] = []
+
         async with session_factory() as session:
             pipeline = await _get_pipeline(session, req.game)
             async for chunk in pipeline.stream_answer(
                 session=session,
                 question=req.question,
                 max_spoiler_tier=req.spoiler_tier,
+                history=req.history or [],
             ):
+                collected.append(chunk)
                 yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+
+            stmt = pg_insert(ChatSession).values(
+                id=session_id,
+                game_slug=req.game,
+                is_logging_opted_out=False,
+            ).on_conflict_do_nothing()
+            await session.execute(stmt)
+            # citations=[] is a W4 placeholder; passage metadata wired in Week 5.
+            session.add(ChatMessage(
+                session_id=session_id, role="user", content=req.question, citations=[]
+            ))
+            session.add(ChatMessage(
+                session_id=session_id, role="assistant", content="".join(collected), citations=[]
+            ))
+            await session.commit()
+
+        yield f"data: {json.dumps({'type': 'session_id', 'content': session_id})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
