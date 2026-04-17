@@ -145,6 +145,7 @@ async def _main(args: argparse.Namespace) -> None:
     from pathlib import Path
 
     from app.adapters.hades import HadesAdapter
+    from app.adapters.hades2 import HadesIIAdapter
     from app.config import get_settings
     from app.db.session import get_session_factory
 
@@ -152,7 +153,7 @@ async def _main(args: argparse.Namespace) -> None:
 
     adapter_map = {
         "hades": HadesAdapter,
-        # hades2 entry added in Task 5 (app/adapters/hades2.py)
+        "hades2": HadesIIAdapter,
     }
 
     if args.game not in adapter_map:
