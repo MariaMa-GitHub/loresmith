@@ -19,6 +19,7 @@ from app.ingestion.chunker import Chunker
 from app.ingestion.embedder import GeminiEmbedder
 from app.ingestion.local_embedder import LocalEmbedder
 from app.ingestion.scraper import Scraper
+from app.ingestion.spoiler_tagger import SpoilerTagger
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ async def run_ingestion(
     embedder: Embedder,
     session: AsyncSession,
     dry_run: bool = False,
+    spoiler_tagger: SpoilerTagger | None = None,
 ) -> IngestResult:
     urls = adapter.get_article_urls()
     pages_fetched = 0
@@ -97,19 +99,27 @@ async def run_ingestion(
     # query. Tracking skipped passages is deferred to Week 3+ integration tests.
     passages_skipped = 0
 
-    if not dry_run:
-        rows = [
-            {
-                "game_slug": adapter.slug,
-                "source_url": chunk.source_url,
-                "content": chunk.content,
-                "content_hash": chunk.content_hash,
-                "spoiler_tier": 0,
-                "embedding": embedding,
-            }
-            for chunk, embedding in zip(all_chunks, embeddings)
-        ]
+    rows = []
+    for chunk, embedding in zip(all_chunks, embeddings):
+        tier = 0
+        if spoiler_tagger is not None:
+            tier = await spoiler_tagger.tag_async(chunk.content, game_slug=adapter.slug)
+        rows.append({
+            "game_slug": adapter.slug,
+            "source_url": chunk.source_url,
+            "content": chunk.content,
+            "content_hash": chunk.content_hash,
+            "spoiler_tier": tier,
+            "embedding": embedding,
+        })
 
+    if spoiler_tagger is not None:
+        nonzero = sum(1 for r in rows if r["spoiler_tier"] > 0)
+        logger.info(
+            "Spoiler-tagged %d chunks (non-zero tier: %d)", len(rows), nonzero
+        )
+
+    if not dry_run:
         stmt = pg_insert(Passage).values(rows)
         stmt = stmt.on_conflict_do_update(
             constraint="uq_passages_content_hash",
@@ -142,6 +152,7 @@ async def _main(args: argparse.Namespace) -> None:
 
     adapter_map = {
         "hades": HadesAdapter,
+        # hades2 entry added in Task 5 (app/adapters/hades2.py)
     }
 
     if args.game not in adapter_map:
@@ -156,6 +167,15 @@ async def _main(args: argparse.Namespace) -> None:
     embedder = make_embedder(settings)
     logger.info("Using %s as embedding backend", type(embedder).__name__)
 
+    from app.llm.gemini import GeminiProvider
+
+    fast_llm = (
+        GeminiProvider(api_key=settings.gemini_api_key, model_name="gemini-2.5-flash-lite")
+        if settings.gemini_api_key
+        else None
+    )
+    spoiler_tagger = SpoilerTagger(llm=fast_llm)
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         result = await run_ingestion(
@@ -165,6 +185,7 @@ async def _main(args: argparse.Namespace) -> None:
             embedder=embedder,
             session=session,
             dry_run=args.dry_run,
+            spoiler_tagger=spoiler_tagger,
         )
 
     print(f"Game:              {result.game_slug}")
@@ -177,6 +198,8 @@ async def _main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="Loresmith ingestion pipeline")
-    parser.add_argument("--game", required=True, choices=["hades"], help="Game slug to ingest")
+    parser.add_argument(
+        "--game", required=True, choices=["hades", "hades2"], help="Game slug to ingest"
+    )
     parser.add_argument("--dry-run", action="store_true", help="Skip DB writes")
     asyncio.run(_main(parser.parse_args()))
