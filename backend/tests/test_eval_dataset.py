@@ -13,9 +13,9 @@ def test_dataset_exists():
     assert DATASET_PATH.exists(), f"Dataset not found at {DATASET_PATH}"
 
 
-def test_dataset_has_at_least_100_questions():
+def test_dataset_has_at_least_150_questions():
     questions = load_questions()
-    assert len(questions) >= 100, f"Expected >= 100 questions, got {len(questions)}"
+    assert len(questions) >= 150, f"Expected >= 150 questions, got {len(questions)}"
 
 
 def test_all_questions_have_required_fields():
