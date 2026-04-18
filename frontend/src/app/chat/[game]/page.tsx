@@ -23,7 +23,11 @@ export default async function ChatPage({ params }: Props) {
         </Link>
         <span className="text-sm font-medium">{selectedGame.display_name}</span>
       </header>
-      <ChatLayout key={game} game={game} />
+      <ChatLayout
+        key={game}
+        gameSlug={game}
+        gameDisplayName={selectedGame.display_name}
+      />
     </div>
   );
 }
