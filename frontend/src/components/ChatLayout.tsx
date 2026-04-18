@@ -6,10 +6,11 @@ import { HistorySidebar } from "./HistorySidebar";
 import { fetchSessionMessages, type ChatMessage } from "@/lib/api";
 
 interface ChatLayoutProps {
-  game: string;
+  gameSlug: string;
+  gameDisplayName: string;
 }
 
-export function ChatLayout({ game }: ChatLayoutProps) {
+export function ChatLayout({ gameSlug, gameDisplayName }: ChatLayoutProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [initialMessages, setInitialMessages] = useState<ChatMessage[]>([]);
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
@@ -36,7 +37,7 @@ export function ChatLayout({ game }: ChatLayoutProps) {
         if (selectionNonce !== selectionNonceRef.current) {
           return;
         }
-        if (data.game_slug !== game) {
+        if (data.game_slug !== gameSlug) {
           setLoadError("That conversation belongs to a different game.");
           return;
         }
@@ -52,7 +53,7 @@ export function ChatLayout({ game }: ChatLayoutProps) {
         );
       }
     },
-    [game, sessionId],
+    [gameSlug, sessionId],
   );
 
   const handleNew = useCallback(() => {
@@ -85,8 +86,8 @@ export function ChatLayout({ game }: ChatLayoutProps) {
   return (
     <div className="flex flex-1 overflow-hidden">
       <HistorySidebar
-        key={`${game}:${sidebarRefresh}`}
-        game={game}
+        key={`${gameSlug}:${sidebarRefresh}`}
+        game={gameSlug}
         currentSessionId={sessionId}
         onSelect={handleSelect}
         onNew={handleNew}
@@ -101,7 +102,8 @@ export function ChatLayout({ game }: ChatLayoutProps) {
           </p>
         )}
         <ChatView
-          game={game}
+          gameSlug={gameSlug}
+          gameDisplayName={gameDisplayName}
           sessionId={sessionId}
           initialMessages={initialMessages}
           onSessionCreated={handleSessionCreated}

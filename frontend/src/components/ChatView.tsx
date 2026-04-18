@@ -6,7 +6,8 @@ import { MessageBubble } from "./MessageBubble";
 import { SpoilerSlider } from "./SpoilerSlider";
 
 interface ChatViewProps {
-  game: string;
+  gameSlug: string;
+  gameDisplayName: string;
   sessionId?: string | null;
   initialMessages?: ChatMessage[];
   onSessionCreated?: (sessionId: string) => void;
@@ -14,7 +15,8 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  game,
+  gameSlug,
+  gameDisplayName,
   sessionId = null,
   initialMessages = [],
   onSessionCreated,
@@ -100,7 +102,7 @@ export function ChatView({
 
     try {
       for await (const event of streamChat({
-        game,
+        game: gameSlug,
         question,
         spoilerTier,
         sessionId,
@@ -204,7 +206,7 @@ export function ChatView({
       <div className="flex-1 overflow-y-auto">
         {messages.length === 0 && (
           <p className="text-center text-muted-foreground mt-16 text-sm">
-            Ask anything about {game} lore.
+            Ask anything about {gameDisplayName} lore.
           </p>
         )}
         {messages.map((msg, i) => (
