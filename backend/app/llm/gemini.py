@@ -3,8 +3,6 @@ from collections.abc import AsyncIterator
 from google import genai
 from google.genai import types
 
-from app.llm.base import LLMProvider
-
 
 def _to_gemini_contents(messages: list[dict]) -> list:
     role_map = {"user": "user", "assistant": "model"}
@@ -58,4 +56,3 @@ class GeminiProvider:
         async for chunk in stream:
             if chunk.text:
                 yield chunk.text
-

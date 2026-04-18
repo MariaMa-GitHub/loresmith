@@ -47,7 +47,11 @@ async def test_rag_pipeline_streams_tokens():
     )
 
     session = AsyncMock()
-    messages, _ = await pipeline.prepare_messages(session=session, question="Who is Zagreus?", max_spoiler_tier=0)
+    messages, _ = await pipeline.prepare_messages(
+        session=session,
+        question="Who is Zagreus?",
+        max_spoiler_tier=0,
+    )
     chunks = []
     async for chunk in pipeline.stream_messages(messages):
         chunks.append(chunk)
@@ -71,7 +75,11 @@ async def test_rag_pipeline_uses_retrieved_context():
     )
 
     session = AsyncMock()
-    messages, _ = await pipeline.prepare_messages(session=session, question="Who is Nyx?", max_spoiler_tier=0)
+    messages, _ = await pipeline.prepare_messages(
+        session=session,
+        question="Who is Nyx?",
+        max_spoiler_tier=0,
+    )
     async for _ in pipeline.stream_messages(messages):
         pass
 
