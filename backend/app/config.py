@@ -1,5 +1,7 @@
 from functools import lru_cache
+from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +18,8 @@ class Settings(BaseSettings):
     # Embeddings
     embedding_backend: str = "local"  # local | gemini
     local_embedding_model: str = "BAAI/bge-base-en-v1.5"  # 768d, matches EMBEDDING_DIM
+    retrieval_top_k_per_method: int = Field(default=10, ge=1)
+    retrieval_top_k_final: int = Field(default=5, ge=1)
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
@@ -28,8 +32,18 @@ class Settings(BaseSettings):
     langfuse_host: str = "https://cloud.langfuse.com"
     sentry_dsn: str = ""
 
+    # CORS
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "https://loresmith.vercel.app",
+    ]
+
     # Security
     ingest_token: str = "change-me"
+    anon_session_cookie_name: str = "loresmith_anon_session"
+    anon_session_cookie_max_age_seconds: int = Field(default=60 * 60 * 24 * 90, ge=1)
+    anon_session_cookie_secure: bool = False
+    anon_session_cookie_samesite: Literal["lax", "none", "strict"] = "lax"
 
 
 @lru_cache

@@ -21,6 +21,10 @@ def test_settings_defaults():
     assert s.ollama_base_url == "http://localhost:11434"
     assert s.ollama_strong_model == "qwen2.5:7b"
     assert s.ollama_fast_model == "qwen2.5:3b"
+    assert s.retrieval_top_k_per_method == 10
+    assert s.retrieval_top_k_final == 5
+    assert s.anon_session_cookie_name == "loresmith_anon_session"
+    assert s.anon_session_cookie_samesite == "lax"
 
 
 def test_settings_ingest_token_has_default():

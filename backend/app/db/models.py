@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -36,15 +37,23 @@ class Passage(Base):
     game_slug: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     spoiler_tier: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     embedding: Mapped[Any] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    embedding_backend: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "game_slug",
+            "source_url",
+            "content_hash",
+            name="uq_passages_game_source_content_hash",
+        ),
         Index("ix_passages_game_spoiler", "game_slug", "spoiler_tier"),
     )
 
@@ -73,6 +82,7 @@ class ChatSession(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
+    owner_token: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     game_slug: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     is_logging_opted_out: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
