@@ -6,6 +6,7 @@ from typing import Protocol, runtime_checkable
 class TaskType(StrEnum):
     ANSWER = "answer"      # strong model
     REWRITE = "rewrite"    # fast/cheap model
+    TAG = "tag"            # fast/cheap model
     VERIFY = "verify"      # fast/cheap model
     MODERATE = "moderate"  # fast/cheap model
 

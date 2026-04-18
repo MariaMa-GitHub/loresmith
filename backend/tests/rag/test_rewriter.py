@@ -83,3 +83,38 @@ async def test_rewriter_uses_at_most_last_n_turns():
     assert "q0" not in prompt_content
     assert "q1" not in prompt_content
     assert "q2" not in prompt_content
+
+
+@pytest.mark.asyncio
+async def test_rewriter_emits_trace_for_llm_path():
+    trace_names = []
+
+    class _RecordingSpan:
+        def set_output(self, output): pass
+        def set_metadata(self, metadata): pass
+
+    class _RecordingTracer:
+        def trace(self, name, metadata=None, **kwargs):
+            trace_names.append(name)
+            from contextlib import contextmanager
+
+            @contextmanager
+            def _cm():
+                yield _RecordingSpan()
+
+            return _cm()
+
+    mock_llm = MagicMock()
+    mock_llm.complete = AsyncMock(return_value="rewritten question")
+
+    rewriter = QueryRewriter(llm=mock_llm, tracer=_RecordingTracer())
+    result = await rewriter.rewrite(
+        question="What weapons does he use?",
+        history=[
+            {"role": "user", "content": "Tell me about Zagreus."},
+            {"role": "assistant", "content": "He is the son of Hades."},
+        ],
+    )
+
+    assert result == "rewritten question"
+    assert trace_names == ["rag.rewrite"]

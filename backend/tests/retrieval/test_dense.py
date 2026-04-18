@@ -71,3 +71,27 @@ async def test_dense_retriever_filters_by_game_slug_and_spoiler():
     assert "game_slug" in sql
     assert "spoiler_tier" in sql
     assert "embedding" in sql  # either ordering on distance or IS NOT NULL
+
+
+@pytest.mark.asyncio
+async def test_dense_retriever_can_filter_by_embedding_identity():
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.all.return_value = []
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    retriever = DenseRetriever()
+    await retriever.search(
+        session=mock_session,
+        game_slug="hades",
+        query_embedding=[0.0] * 768,
+        embedding_backend="local",
+        embedding_model="BAAI/bge-base-en-v1.5",
+    )
+
+    compiled = mock_session.execute.call_args.args[0].compile(
+        compile_kwargs={"literal_binds": True}
+    )
+    sql = str(compiled).lower()
+    assert "embedding_backend" in sql
+    assert "embedding_model" in sql

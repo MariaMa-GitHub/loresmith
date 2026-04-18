@@ -24,6 +24,8 @@ class DenseRetriever:
         query_embedding: list[float],
         top_k: int = 10,
         max_spoiler_tier: int = 0,
+        embedding_backend: str | None = None,
+        embedding_model: str | None = None,
     ) -> list[DenseHit]:
         distance = Passage.embedding.cosine_distance(query_embedding).label("distance")
 
@@ -40,6 +42,10 @@ class DenseRetriever:
             .order_by(distance)
             .limit(top_k)
         )
+        if embedding_backend is not None:
+            stmt = stmt.where(Passage.embedding_backend == embedding_backend)
+        if embedding_model is not None:
+            stmt = stmt.where(Passage.embedding_model == embedding_model)
 
         result = await session.execute(stmt)
         rows = result.all()

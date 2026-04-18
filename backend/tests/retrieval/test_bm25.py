@@ -55,3 +55,32 @@ def test_bm25_rebuild_replaces_old_index():
     index.build([2], ["new content only"])
     hits = index.search("new content", top_k=1)
     assert hits[0].passage_id == 2
+
+
+def test_bm25_search_filters_by_spoiler_tier():
+    index = BM25Index()
+    index.build(
+        [1, 2],
+        [
+            "Chronos is the Titan of Time and the primary antagonist.",
+            "Melinoe trains with Hecate in the Crossroads.",
+        ],
+        spoiler_tiers=[1, 0],
+    )
+
+    hits = index.search("Chronos Melinoe", top_k=5, max_spoiler_tier=0)
+
+    assert [hit.passage_id for hit in hits] == [2]
+    assert hits[0].spoiler_tier == 0
+
+
+def test_bm25_strips_question_punctuation_from_queries():
+    index = BM25Index()
+    index.build(
+        [1],
+        ["Zagreus uses the Stygian Blade during his escape attempts."],
+    )
+
+    hits = index.search("Who is Zagreus?", top_k=5)
+
+    assert [hit.passage_id for hit in hits] == [1]

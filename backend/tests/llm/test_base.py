@@ -6,6 +6,7 @@ from app.llm.base import LLMProvider, TaskType
 def test_task_type_values():
     assert TaskType.ANSWER == "answer"
     assert TaskType.REWRITE == "rewrite"
+    assert TaskType.TAG == "tag"
     assert TaskType.VERIFY == "verify"
     assert TaskType.MODERATE == "moderate"
 

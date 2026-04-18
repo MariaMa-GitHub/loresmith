@@ -1,4 +1,5 @@
 from app.llm.base import LLMProvider
+from app.tracing.langfuse import noop_tracer
 
 _REWRITE_SYSTEM = (
     "You are a query rewriting assistant. "
@@ -13,9 +14,15 @@ _MAX_HISTORY_TURNS = 3
 class QueryRewriter:
     """Rewrites a follow-up question into a standalone query using LLM."""
 
-    def __init__(self, llm: LLMProvider, max_history_turns: int = _MAX_HISTORY_TURNS) -> None:
+    def __init__(
+        self,
+        llm: LLMProvider,
+        max_history_turns: int = _MAX_HISTORY_TURNS,
+        tracer=None,
+    ) -> None:
         self._llm = llm
         self._max_history_turns = max_history_turns
+        self._tracer = tracer or noop_tracer()
 
     async def rewrite(self, question: str, history: list[dict[str, str]]) -> str:
         if not history:
@@ -35,8 +42,13 @@ class QueryRewriter:
             "Rewrite the new question to be fully self-contained:"
         )
 
-        rewritten = await self._llm.complete(
-            messages=[{"role": "user", "content": prompt}],
-            system=_REWRITE_SYSTEM,
-        )
+        with self._tracer.trace(
+            "rag.rewrite",
+            metadata={"history_turns": -(-len(turns) // 2)},
+        ) as span:
+            rewritten = await self._llm.complete(
+                messages=[{"role": "user", "content": prompt}],
+                system=_REWRITE_SYSTEM,
+            )
+            span.set_output(rewritten)
         return rewritten.strip()

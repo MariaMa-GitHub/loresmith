@@ -59,6 +59,3 @@ class GeminiProvider:
             if chunk.text:
                 yield chunk.text
 
-
-# Satisfy Protocol at type-check time
-_: LLMProvider = GeminiProvider.__new__(GeminiProvider)  # type: ignore[assignment]
