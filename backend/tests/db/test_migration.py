@@ -35,6 +35,7 @@ def test_recent_passage_migrations_exist():
     assert any(name.startswith("004_") for name in versions)
     assert any(name.startswith("005_") for name in versions)
     assert any(name.startswith("006_") for name in versions)
+    assert any(name.startswith("007_") for name in versions)
 
 
 async def _reset_database(database_url: str) -> None:
@@ -57,7 +58,7 @@ async def _inspect_migrated_schema(database_url: str) -> None:
             assert vector_ext.scalar_one() == "vector"
 
             version = await conn.execute(text("SELECT version_num FROM alembic_version"))
-            assert version.scalar_one() == "006"
+            assert version.scalar_one() == "007"
 
             constraint = await conn.execute(
                 text(
@@ -120,6 +121,30 @@ async def _inspect_migrated_schema(database_url: str) -> None:
             assert embedding_identity_columns.scalars().all() == [
                 "embedding_backend",
                 "embedding_model",
+            ]
+
+            semantic_cache_scope_columns = await conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'semantic_cache'
+                      AND column_name IN (
+                          'corpus_revision',
+                          'max_spoiler_tier',
+                          'embedding_backend',
+                          'embedding_model'
+                      )
+                    ORDER BY column_name
+                    """
+                )
+            )
+            assert semantic_cache_scope_columns.scalars().all() == [
+                "corpus_revision",
+                "embedding_backend",
+                "embedding_model",
+                "max_spoiler_tier",
             ]
     finally:
         await engine.dispose()

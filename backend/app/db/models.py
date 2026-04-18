@@ -123,10 +123,25 @@ class SemanticCache(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     game_slug: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    corpus_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    max_spoiler_tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding_backend: Mapped[str] = mapped_column(String(32), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(256), nullable=False)
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     query_embedding: Mapped[Any] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
     response: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_semantic_cache_scope",
+            "game_slug",
+            "corpus_revision",
+            "max_spoiler_tier",
+            "embedding_backend",
+            "embedding_model",
+        ),
+    )
 
 
 class EvalRun(Base):
