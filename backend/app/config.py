@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     semantic_cache_threshold: float = Field(default=0.92, ge=0.0, le=1.0)
     semantic_cache_lookup_limit: int = Field(default=3, ge=1)
 
+    # Verifier
+    verifier_enabled: bool = True
+
     # Security
     ingest_token: str = "change-me"
     anon_session_cookie_name: str = "loresmith_anon_session"

@@ -53,6 +53,11 @@ def test_chat_message_references_chat_session():
     assert "chat_sessions" in fks
 
 
+def test_chat_message_has_response_meta_column():
+    cols = {c.key for c in ChatMessage.__table__.columns}
+    assert "response_meta" in cols
+
+
 def test_shared_thread_has_slug_pk():
     pk_cols = [c.key for c in SharedThread.__table__.primary_key.columns]
     assert "slug" in pk_cols
