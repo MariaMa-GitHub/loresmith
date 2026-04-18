@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     retrieval_top_k_per_method: int = Field(default=10, ge=1)
     retrieval_top_k_final: int = Field(default=5, ge=1)
 
+    # Reranker
+    reranker_enabled: bool = True
+    reranker_model: str = "BAAI/bge-reranker-base"
+    rerank_candidates: int = Field(default=20, ge=1)
+
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
     ollama_strong_model: str = "qwen2.5:7b"

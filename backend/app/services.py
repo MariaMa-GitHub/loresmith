@@ -18,6 +18,7 @@ from app.ingestion.pipeline import Embedder, make_embedder
 from app.llm.router import LLMRouter, build_llm_router
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.dense import DenseRetriever
+from app.retrieval.reranker import CrossEncoderReranker, NullReranker, Reranker
 from app.tracing.langfuse import LangfuseTracer
 
 
@@ -28,6 +29,7 @@ class Services:
     embedder: Embedder
     dense: DenseRetriever
     router: LLMRouter
+    reranker: Reranker
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,11 @@ class CorpusRevision:
 
 def build_services() -> Services:
     settings = get_settings()
+    reranker = (
+        CrossEncoderReranker(model_name=settings.reranker_model)
+        if settings.reranker_enabled
+        else NullReranker()
+    )
     return Services(
         settings=settings,
         tracer=LangfuseTracer(
@@ -49,6 +56,7 @@ def build_services() -> Services:
         embedder=make_embedder(settings),
         dense=DenseRetriever(),
         router=build_llm_router(settings),
+        reranker=reranker,
     )
 
 

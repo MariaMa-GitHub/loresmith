@@ -195,6 +195,7 @@ async def test_rag_pipeline_uses_configured_top_k(monkeypatch):
         game_slug="hades",
         game_display_name="Hades",
         retrieve_top_k=3,
+        rerank_candidates=4,
         final_top_k=2,
     )
 
@@ -211,7 +212,7 @@ async def test_rag_pipeline_uses_configured_top_k(monkeypatch):
         mock_dense.search.await_args.kwargs["embedding_model"]
         == "BAAI/bge-base-en-v1.5"
     )
-    assert fused_top_ks == [2]
+    assert fused_top_ks == [4]
 
 
 @pytest.mark.asyncio
@@ -234,3 +235,63 @@ async def test_rag_pipeline_answer_returns_answer_and_passages():
 
     assert response.answer == "Nyx is the Goddess of Night. [1]"
     assert response.passages[0]["passage_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_pipeline_applies_reranker_before_prompt(monkeypatch):
+    """After rrf_fuse, the reranker reorders candidates and final_top_k is
+    taken from the reranked list."""
+    import app.rag.pipeline as pipeline_module
+    from app.rag.pipeline import RAGPipeline
+    from app.retrieval.hybrid import HybridHit
+    from app.retrieval.reranker import RerankedHit
+
+    fused = [
+        HybridHit(passage_id=1, rrf_score=0.9, content="A", source_url="u1"),
+        HybridHit(passage_id=2, rrf_score=0.8, content="B", source_url="u2"),
+        HybridHit(passage_id=3, rrf_score=0.7, content="C", source_url="u3"),
+    ]
+    monkeypatch.setattr(pipeline_module, "rrf_fuse", lambda **kw: fused)
+
+    class _FakeReranker:
+        async def rerank(self, query, hits, top_k):
+            # Reverse order to prove we used the reranker's output.
+            return [
+                RerankedHit(
+                    passage_id=h.passage_id,
+                    rerank_score=-h.rrf_score,
+                    content=h.content,
+                    source_url=h.source_url,
+                )
+                for h in list(reversed(hits))[:top_k]
+            ]
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+        async def embed(self, texts):
+            return [[0.0] * 768 for _ in texts]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, q, top_k, max_spoiler_tier):
+            return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=object(),
+        game_slug="hades",
+        game_display_name="Hades",
+        reranker=_FakeReranker(),
+        retrieve_top_k=10,
+        rerank_candidates=10,
+        final_top_k=2,
+    )
+
+    passages = await p._retrieve(session=None, question="q", max_spoiler_tier=0)
+    assert [h["passage_id"] for h in passages] == [3, 2]

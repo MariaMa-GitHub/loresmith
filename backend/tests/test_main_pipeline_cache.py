@@ -27,11 +27,13 @@ def _install_fake_app_state():
         settings=SimpleNamespace(
             retrieval_top_k_per_method=10,
             retrieval_top_k_final=5,
+            rerank_candidates=20,
         ),
         tracer="tracer",
         embedder="embedder",
         dense="dense",
         router=_FakeRouter(),
+        reranker="reranker",
     )
     main_module.app.state.pipeline_cache = {}
     main_module.app.state.pipeline_lock = asyncio.Lock()
