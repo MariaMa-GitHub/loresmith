@@ -33,7 +33,7 @@ def test_hades_has_starter_prompts():
     assert len(prompts) >= 3
 
 
-def test_hades_chunk_size_is_reasonable():
+def test_hades_uses_reasonable_chunker_settings():
     adapter = HadesAdapter()
-    assert 200 <= adapter.chunk_size <= 800
-    assert adapter.chunk_overlap < adapter.chunk_size
+    assert 200 <= adapter.chunker.chunk_size <= 800
+    assert adapter.chunker.overlap < adapter.chunker.chunk_size

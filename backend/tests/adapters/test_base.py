@@ -1,6 +1,12 @@
 from dataclasses import dataclass
 
-from app.adapters.base import GameAdapter, RobotsPolicy, SourceConfig
+from app.adapters.base import (
+    DEFAULT_SPOILER_PROFILE,
+    GameAdapter,
+    RobotsPolicy,
+    SourceConfig,
+)
+from app.ingestion.chunker import Chunker
 
 
 def test_source_config_defaults():
@@ -21,15 +27,20 @@ class FakeAdapter:
     sources: list = None
     robots_policy: RobotsPolicy = RobotsPolicy.RESPECT
     license: str = "CC-BY-SA-3.0"
-    chunk_size: int = 400
-    chunk_overlap: int = 50
+    chunker: Chunker = None
     starter_prompts: list = None
+    spoiler_profile = DEFAULT_SPOILER_PROFILE
+    entity_schema: list = None
 
     def __post_init__(self):
         if self.sources is None:
             self.sources = []
+        if self.chunker is None:
+            self.chunker = Chunker(chunk_size=400, overlap=50)
         if self.starter_prompts is None:
             self.starter_prompts = []
+        if self.entity_schema is None:
+            self.entity_schema = []
 
     def get_article_urls(self) -> list[str]:
         return []

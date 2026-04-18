@@ -53,6 +53,9 @@ class GeminiEmbedder:
     EMBEDDING_BACKEND=gemini to switch to this one.
     """
 
+    backend_name = "gemini"
+    model_name = _MODEL
+
     def __init__(
         self,
         api_key: str | None = None,

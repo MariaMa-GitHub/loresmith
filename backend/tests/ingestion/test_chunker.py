@@ -29,11 +29,28 @@ def test_chunker_chunks_overlap():
     words = [f"word{i}" for i in range(25)]
     text = " ".join(words)
     chunks = chunker.chunk(text, "https://example.com", title="Overlap Test")
-    # The last 3 words of chunk N should appear at the start of chunk N+1
+    # The last 3 windowed words of chunk N should appear at the start of
+    # chunk N+1's windowed section. Each chunk's content carries a "Title\n\n"
+    # prefix so we compare only the body words ("word*").
     assert len(chunks) >= 2
-    end_of_first = chunks[0].content.split()[-3:]
-    start_of_second = chunks[1].content.split()[:3]
-    assert end_of_first == start_of_second
+    first_words = [w for w in chunks[0].content.split() if w.startswith("word")]
+    second_words = [w for w in chunks[1].content.split() if w.startswith("word")]
+    assert first_words[-3:] == second_words[:3]
+
+
+def test_chunker_prepends_title_to_each_chunk_content():
+    chunker = Chunker(chunk_size=6, overlap=1)
+    text = " ".join([f"w{i}" for i in range(18)])
+    chunks = chunker.chunk(text, "https://example.com", title="Zagreus")
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        assert chunk.content.startswith("Zagreus\n\n")
+
+
+def test_chunker_omits_prefix_when_title_is_blank():
+    chunker = Chunker(chunk_size=6, overlap=1)
+    chunks = chunker.chunk("alpha beta gamma", "https://example.com", title="")
+    assert chunks[0].content == "alpha beta gamma"
 
 
 def test_chunker_all_chunks_have_source_url():

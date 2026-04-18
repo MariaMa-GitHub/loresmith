@@ -31,6 +31,9 @@ class LocalEmbedder:
     can be computed as a plain dot product in pgvector.
     """
 
+    backend_name = "local"
+    model_name: str
+
     def __init__(
         self,
         model_name: str = _DEFAULT_MODEL,
@@ -38,7 +41,7 @@ class LocalEmbedder:
         batch_size: int = _DEFAULT_BATCH_SIZE,
         device: str | None = None,
     ) -> None:
-        self._model_name = model_name
+        self.model_name = model_name
         self._batch_size = batch_size
         self._device = device  # None → let sentence-transformers pick (cpu/cuda/mps).
         self._model: SentenceTransformer | None = None
@@ -49,9 +52,9 @@ class LocalEmbedder:
 
         logger.info(
             "Loading local embedding model %s (first load may download ~400 MB)",
-            self._model_name,
+            self.model_name,
         )
-        model = SentenceTransformer(self._model_name, device=self._device)
+        model = SentenceTransformer(self.model_name, device=self._device)
         # sentence-transformers 5.x renamed the method; keep a fallback for
         # 3.x/4.x so the dependency pin stays wide.
         get_dim = getattr(
@@ -60,7 +63,7 @@ class LocalEmbedder:
         dim = get_dim()
         if dim != _EXPECTED_DIM:
             raise RuntimeError(
-                f"Local embedding model {self._model_name!r} emits {dim}-dim "
+                f"Local embedding model {self.model_name!r} emits {dim}-dim "
                 f"vectors but the pgvector column expects {_EXPECTED_DIM}. "
                 "Either pick a 768-dim model or migrate the Passage.embedding column."
             )

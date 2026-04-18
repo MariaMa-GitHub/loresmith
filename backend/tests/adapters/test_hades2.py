@@ -35,3 +35,9 @@ def test_hades2_get_article_urls():
     urls = HadesIIAdapter().get_article_urls()
     assert len(urls) >= 10
     assert all("hades2.fandom.com" in url for url in urls)
+
+
+def test_hades2_uses_reasonable_chunker_settings():
+    adapter = HadesIIAdapter()
+    assert 200 <= adapter.chunker.chunk_size <= 800
+    assert adapter.chunker.overlap < adapter.chunker.chunk_size
