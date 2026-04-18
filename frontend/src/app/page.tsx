@@ -1,13 +1,15 @@
 import { fetchGames, type Game } from "@/lib/api";
 import { GamePicker } from "@/components/GamePicker";
 
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   let games: Game[] = [];
+  let loadError = false;
   try {
     games = await fetchGames();
   } catch {
-    // Backend not running locally — show placeholder
-    games = [{ slug: "hades", display_name: "Hades" }];
+    loadError = true;
   }
 
   return (
@@ -16,7 +18,14 @@ export default async function Home() {
       <p className="mt-2 text-muted-foreground">
         Answers about video-game lore, grounded in source material with inline citations.
       </p>
-      <GamePicker games={games} />
+      {loadError ? (
+        <p className="mt-8 rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+          The game catalog is unavailable right now. Check that the backend is running and try
+          again.
+        </p>
+      ) : (
+        <GamePicker games={games} />
+      )}
     </main>
   );
 }
