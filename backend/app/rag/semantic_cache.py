@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import SemanticCache as SemanticCacheRow
-from app.services import CorpusRevision
+
+if TYPE_CHECKING:
+    from app.services import CorpusRevision
 
 
 @dataclass(frozen=True)

@@ -295,3 +295,57 @@ async def test_pipeline_applies_reranker_before_prompt(monkeypatch):
 
     passages = await p._retrieve(session=None, question="q", max_spoiler_tier=0)
     assert [h["passage_id"] for h in passages] == [3, 2]
+
+
+@pytest.mark.asyncio
+async def test_answer_returns_cached_response_without_calling_llm(monkeypatch):
+    from app.rag.pipeline import RAGPipeline
+    from app.rag.semantic_cache import CachedAnswer
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+        async def embed(self, texts):
+            return [[0.2] * 768]
+
+    class _Dense:
+        async def search(self, **kw):
+            raise AssertionError("retrieval must not run on cache hit")
+
+    class _BM25:
+        def search(self, *a, **kw):
+            raise AssertionError("retrieval must not run on cache hit")
+
+    class _LLM:
+        model_name = "fake"
+        async def complete(self, *a, **kw):
+            raise AssertionError("LLM must not be called on cache hit")
+
+    class _Cache:
+        async def get(self, **kw):
+            assert kw["max_spoiler_tier"] == 0
+            assert kw["embedding_backend"] == "local"
+            assert kw["embedding_model"] == "bge-base"
+            return CachedAnswer(
+                answer="cached",
+                passages=[{"passage_id": 1, "content": "p", "source_url": "u"}],
+                citations=[{"index": 1, "source_url": "u", "title": "t"}],
+                similarity=0.99,
+            )
+        async def put(self, **kw):
+            raise AssertionError("put must not run on cache hit")
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        semantic_cache=_Cache(),
+        corpus_revision_fn=lambda session, slug: "10:100",
+    )
+
+    response = await p.answer(session=None, question="q", max_spoiler_tier=0)
+    assert response.answer == "cached"
+    assert response.passages[0]["passage_id"] == 1

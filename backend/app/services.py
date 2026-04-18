@@ -16,6 +16,7 @@ from app.config import Settings, get_settings
 from app.db.models import Passage
 from app.ingestion.pipeline import Embedder, make_embedder
 from app.llm.router import LLMRouter, build_llm_router
+from app.rag.semantic_cache import SemanticCache, corpus_revision_key
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.dense import DenseRetriever
 from app.retrieval.reranker import CrossEncoderReranker, NullReranker, Reranker
@@ -30,6 +31,7 @@ class Services:
     dense: DenseRetriever
     router: LLMRouter
     reranker: Reranker
+    semantic_cache: SemanticCache | None
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,14 @@ def build_services() -> Services:
         if settings.reranker_enabled
         else NullReranker()
     )
+    cache = (
+        SemanticCache(
+            similarity_threshold=settings.semantic_cache_threshold,
+            lookup_limit=settings.semantic_cache_lookup_limit,
+        )
+        if settings.semantic_cache_enabled
+        else None
+    )
     return Services(
         settings=settings,
         tracer=LangfuseTracer(
@@ -57,7 +67,13 @@ def build_services() -> Services:
         dense=DenseRetriever(),
         router=build_llm_router(settings),
         reranker=reranker,
+        semantic_cache=cache,
     )
+
+
+async def resolve_corpus_revision_key(session, game_slug: str) -> str:
+    revision = await get_corpus_revision(session, game_slug)
+    return corpus_revision_key(revision)
 
 
 async def build_bm25(session, game_slug: str) -> tuple[BM25Index, dict[int, str]]:

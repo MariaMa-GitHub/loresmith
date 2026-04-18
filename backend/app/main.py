@@ -37,6 +37,7 @@ from app.services import (
     build_bm25,
     build_services,
     get_corpus_revision,
+    resolve_corpus_revision_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,8 @@ async def _get_pipeline(session, game_slug: str) -> RAGPipeline:
                 retrieve_top_k=svc.settings.retrieval_top_k_per_method,
                 rerank_candidates=svc.settings.rerank_candidates,
                 final_top_k=svc.settings.retrieval_top_k_final,
+                semantic_cache=svc.semantic_cache,
+                corpus_revision_fn=resolve_corpus_revision_key,
             ),
         )
     return cache[game_slug].pipeline
