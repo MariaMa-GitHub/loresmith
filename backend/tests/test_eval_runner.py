@@ -91,8 +91,10 @@ async def test_run_eval_returns_metrics_and_results(tmp_path):
     assert report["metrics"]["dataset_size"] == 1
     assert report["metrics"]["citation_rate"] == 1.0
     assert report["metrics"]["retrieval_recall_at_5_mean"] == 1.0
+    assert report["metrics"]["retrieval_recall_at_5_exact_url_mean"] == 1.0
     assert report["metrics"]["annotated_citation_examples"] == 1
     assert report["metrics"]["citation_validity_rate"] == 1.0
+    assert report["metrics"]["citation_validity_exact_url_rate"] == 1.0
     assert report["metrics"]["faithfulness_rate"] == 1.0
     assert report["results"][0]["exact_match"] is True
     assert report["results"][0]["passages"][0]["passage_id"] == 1
@@ -217,6 +219,95 @@ async def test_run_eval_dedupes_same_source_url_citations(tmp_path):
             "title": "Zagreus",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_run_eval_uses_canonical_source_identity_for_alias_urls(tmp_path):
+    examples = [
+        EvalExample(
+            id="q-alias",
+            question="What is the ending of Hades?",
+            expected_answer="Persephone returns and the family reconciles.",
+            stratum="ambiguous",
+            spoiler_tier=3,
+            gold_source_urls=[
+                "https://hades.fandom.com/wiki/Persephone",
+                "https://hades.fandom.com/wiki/Hades_(character)",
+            ],
+        )
+    ]
+
+    async def _answer(_example: EvalExample) -> RAGResponse:
+        return RAGResponse(
+            answer="Persephone returns and the family reconciles. [1][2]",
+            passages=[
+                {
+                    "passage_id": 11,
+                    "content": "Persephone\n\nPersephone returns to the House.",
+                    "source_url": "https://hades.fandom.com/wiki/Persephone",
+                },
+                {
+                    "passage_id": 22,
+                    "content": "Hades\n\nHades reconciles with Persephone.",
+                    "source_url": "https://hades.fandom.com/wiki/Hades",
+                },
+            ],
+        )
+
+    report = await run_eval(
+        game_slug="hades",
+        dataset_path=tmp_path / "sample.jsonl",
+        examples=examples,
+        answer_fn=_answer,
+        run_name="canonical-source-identity",
+    )
+
+    assert report["metrics"]["retrieval_recall_at_5_mean"] == 1.0
+    assert report["metrics"]["retrieval_recall_at_5_exact_url_mean"] == 0.5
+    assert report["metrics"]["citation_validity_rate"] == 1.0
+    assert report["metrics"]["citation_validity_exact_url_rate"] == 0.0
+    assert set(report["results"][0]["gold_source_ids"]) == {"persephone", "hades"}
+    assert set(report["results"][0]["retrieved_source_ids"]) == {"persephone", "hades"}
+    assert report["results"][0]["unresolved_gold_source_urls"] == []
+    assert report["results"][0]["citation_validity"] is True
+    assert report["results"][0]["citation_validity_exact_url"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_eval_marks_canonical_citation_invalid_when_cited_url_is_unresolved(tmp_path):
+    examples = [
+        EvalExample(
+            id="q-unresolved-citation",
+            question="Who is Nyx?",
+            expected_answer="Nyx is the Goddess of Night.",
+            stratum="factual",
+            spoiler_tier=0,
+            gold_source_urls=["https://hades.fandom.com/wiki/Nyx"],
+        )
+    ]
+
+    async def _answer(_example: EvalExample) -> RAGResponse:
+        return RAGResponse(
+            answer="Nyx is the Goddess of Night. [1]",
+            passages=[
+                {
+                    "passage_id": 1,
+                    "content": "Nyx\n\nNyx is the Goddess of Night.",
+                    "source_url": "https://example.com/not-nyx",
+                }
+            ],
+        )
+
+    report = await run_eval(
+        game_slug="hades",
+        dataset_path=tmp_path / "sample.jsonl",
+        examples=examples,
+        answer_fn=_answer,
+        run_name="unresolved-canonical-citation",
+    )
+
+    assert report["results"][0]["citation_validity"] is False
+    assert report["results"][0]["citation_validity_exact_url"] is False
 
 
 @pytest.mark.asyncio

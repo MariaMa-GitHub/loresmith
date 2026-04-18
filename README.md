@@ -55,6 +55,7 @@ uvicorn app.main:app --reload   # starts on :8000
 **Frontend:**
 ```bash
 cd frontend
+nvm use 24.15.0   # or: nvm install 24.15.0 && nvm use 24.15.0
 npm install
 npm run dev   # starts on :3000
 ```

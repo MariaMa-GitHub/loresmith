@@ -19,6 +19,7 @@ from app.eval.metrics import (
     token_recall,
 )
 from app.eval.report import build_report, default_report_path, write_report
+from app.eval.source_identity import resolve_source_identities, resolve_source_identity
 from app.games import GAME_DISPLAY
 from app.llm.base import TaskType
 from app.rag.citations import normalize_answer_citations, parse_inline_citation_indices
@@ -100,25 +101,64 @@ async def run_eval(
             passage["source_url"] for passage in normalized_response.passages
         ]
         gold_source_urls = sorted(set(example.gold_source_urls))
+        gold_source_identities = resolve_source_identities(game_slug, gold_source_urls)
+        retrieved_source_ids = [
+            source_id
+            for url in retrieved_source_urls
+            if (source_id := resolve_source_identity(game_slug, url)) is not None
+        ]
 
-        retrieval_recall_at_5: float | None = None
+        retrieval_recall_at_5_exact_url: float | None = None
         if gold_source_urls:
             retrieved_set = set(retrieved_source_urls[:5])
-            retrieval_recall_at_5 = round(
+            retrieval_recall_at_5_exact_url = round(
                 len(retrieved_set & set(gold_source_urls)) / len(gold_source_urls),
                 4,
             )
 
-        citation_validity: bool | None = None
+        retrieval_recall_at_5: float | None = None
+        if gold_source_urls and not gold_source_identities.unresolved_urls:
+            retrieved_id_set = set(retrieved_source_ids[:5])
+            retrieval_recall_at_5 = round(
+                len(retrieved_id_set & set(gold_source_identities.resolved_ids))
+                / len(gold_source_identities.resolved_ids),
+                4,
+            )
+
+        citation_validity_exact_url: bool | None = None
         if gold_source_urls:
+            citation_validity_exact_url = bool(cited_indices)
+            if citation_validity_exact_url:
+                citation_validity_exact_url = len(cited_indices) == len(
+                    normalized_response.citations
+                )
+            if citation_validity_exact_url:
+                cited_urls = {
+                    citation["source_url"] for citation in normalized_response.citations
+                }
+                citation_validity_exact_url = cited_urls.issubset(set(gold_source_urls))
+
+        citation_validity: bool | None = None
+        if gold_source_urls and not gold_source_identities.unresolved_urls:
             citation_validity = bool(cited_indices)
             if citation_validity:
                 citation_validity = len(cited_indices) == len(normalized_response.citations)
             if citation_validity:
-                cited_urls = {
-                    citation["source_url"] for citation in normalized_response.citations
-                }
-                citation_validity = cited_urls.issubset(set(gold_source_urls))
+                cited_source_ids = []
+                for citation in normalized_response.citations:
+                    source_id = resolve_source_identity(
+                        game_slug,
+                        citation["source_url"],
+                    )
+                    if source_id is None:
+                        citation_validity = False
+                        break
+                    cited_source_ids.append(source_id)
+            if citation_validity:
+                cited_source_ids_set = set(cited_source_ids)
+                citation_validity = cited_source_ids_set.issubset(
+                    set(gold_source_identities.resolved_ids)
+                )
 
         judgment = (
             await judge_fn(example, normalized_response)
@@ -135,8 +175,13 @@ async def run_eval(
                 "has_inline_citation": has_inline_citation(normalized_response.answer),
                 "cited_indices": cited_indices,
                 "retrieved_source_urls": retrieved_source_urls,
+                "retrieved_source_ids": retrieved_source_ids,
+                "gold_source_ids": gold_source_identities.resolved_ids,
+                "unresolved_gold_source_urls": gold_source_identities.unresolved_urls,
                 "retrieval_recall_at_5": retrieval_recall_at_5,
+                "retrieval_recall_at_5_exact_url": retrieval_recall_at_5_exact_url,
                 "citation_validity": citation_validity,
+                "citation_validity_exact_url": citation_validity_exact_url,
                 "exact_match": exact_match(
                     example.expected_answer,
                     normalized_response.answer,
@@ -162,10 +207,19 @@ async def run_eval(
         value for item in results
         if (value := item["retrieval_recall_at_5"]) is not None
     ]
+    exact_url_retrieval_values = [
+        value for item in results
+        if (value := item["retrieval_recall_at_5_exact_url"]) is not None
+    ]
     citation_values = [
         item["citation_validity"]
         for item in results
         if item["citation_validity"] is not None
+    ]
+    exact_url_citation_values = [
+        item["citation_validity_exact_url"]
+        for item in results
+        if item["citation_validity_exact_url"] is not None
     ]
     faithfulness_values = [
         item["faithful"] for item in results if item["faithful"] is not None
@@ -198,7 +252,9 @@ async def run_eval(
         "avg_latency_ms": round(sum(item["latency_ms"] for item in results) / size, 2),
         "avg_context_passages": round(sum(item["num_passages"] for item in results) / size, 2),
         "retrieval_recall_at_5_mean": _mean(retrieval_values),
+        "retrieval_recall_at_5_exact_url_mean": _mean(exact_url_retrieval_values),
         "citation_validity_rate": _bool_rate(citation_values),
+        "citation_validity_exact_url_rate": _bool_rate(exact_url_citation_values),
         "judged_examples": len(faithfulness_values),
         "faithfulness_rate": _bool_rate(faithfulness_values),
         "answer_correctness_rate": _bool_rate(correctness_values),

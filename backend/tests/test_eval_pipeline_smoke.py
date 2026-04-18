@@ -134,6 +134,8 @@ async def test_run_pipeline_eval_smoke(monkeypatch, tmp_path):
 
     assert report["metrics"]["dataset_size"] == 1
     assert report["metrics"]["retrieval_recall_at_5_mean"] == 1.0
+    assert report["metrics"]["retrieval_recall_at_5_exact_url_mean"] == 1.0
     assert report["metrics"]["citation_validity_rate"] == 1.0
+    assert report["metrics"]["citation_validity_exact_url_rate"] == 1.0
     assert report["metrics"]["faithfulness_rate"] == 1.0
     assert output_path.exists()

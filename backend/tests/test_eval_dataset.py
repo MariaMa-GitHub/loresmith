@@ -2,6 +2,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from app.eval.source_identity import resolve_source_identities
+
 DATASET_PATH = Path(__file__).parent.parent / "app" / "eval" / "datasets" / "hades.jsonl"
 VALID_STRATA = {"factual", "multi_hop", "ambiguous", "adversarial"}
 MIN_STRATUM_COUNTS = {
@@ -86,6 +88,20 @@ def test_optional_eval_fields_are_well_typed_when_present():
             )
         if "expects_refusal" in q:
             assert q["expects_refusal"] in {True, False, None}
+
+
+def test_gold_source_annotations_resolve_to_ingested_source_identities():
+    unresolved: dict[str, list[str]] = {}
+    for q in load_questions():
+        gold_source_urls = q.get("gold_source_urls") or []
+        resolved = resolve_source_identities("hades", gold_source_urls)
+        if resolved.unresolved_urls:
+            unresolved[q["id"]] = resolved.unresolved_urls
+
+    assert unresolved == {}, (
+        "Each gold source URL should map to an ingested canonical source identity. "
+        f"Unresolved entries: {unresolved}"
+    )
 
 
 def test_dataset_has_meaningful_annotation_coverage_for_week_4_eval():
