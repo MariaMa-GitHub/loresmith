@@ -1,6 +1,6 @@
 # Loresmith
 
-A free, open-source RAG platform for video-game lore. Ask natural-language questions about a game and get grounded answers with inline citations, spoiler-tier filtering, and multi-turn chat — all backed by wiki content retrieved at query time. Currently supports **Hades** and **Hades II**, with a pluggable adapter interface for adding more games.
+A free-to-use, open-source RAG (Retrieval-Augmented Generation) platform for video-game lore. Ask natural-language questions about a game and get grounded answers with inline citations, spoiler-tier filtering, and multi-turn chat — all backed by wiki content retrieved at query time. Currently supports **Hades** and **Hades II**, with a pluggable adapter interface for adding more games.
 
 ---
 
@@ -11,7 +11,7 @@ A free, open-source RAG platform for video-game lore. Ask natural-language quest
 - **Spoiler control** — passages are tagged tier 0–3 at ingestion; retrieval enforces a configurable max tier per request
 - **Streaming answers** — server-sent events with inline `[N]` citations linked to source passages
 - **Multi-game** — pluggable `GameAdapter` interface; currently supports Hades and Hades II
-- **Eval harness** — 150 hand-labeled questions across four strata (factual, multi-hop, ambiguous, adversarial)
+- **Eval harness** — CLI runner with JSON report output over 150 hand-labeled questions across four strata (factual, multi-hop, ambiguous, adversarial)
 
 ---
 
@@ -27,15 +27,15 @@ A free, open-source RAG platform for video-game lore. Ask natural-language quest
 | Embeddings | `bge-base-en-v1.5` (local, 768d); optional `gemini-embedding-001` via `EMBEDDING_BACKEND=gemini` |
 | Retrieval | `rank_bm25` + pgvector cosine ANN + RRF |
 | Observability | Langfuse |
-| Scraping | `httpx` + `selectolax`, robots-aware, Fandom MediaWiki API |
+| Scraping | `httpx` + `selectolax`, robots-aware, Fandom MediaWiki API, conservative Fandom robots fallback |
 
 ---
 
 ## Prerequisites
 
-- Python 3.12
-- Node 18+
-- Postgres with the pgvector extension (e.g. [Neon](https://neon.tech) free tier)
+- Python `3.12`
+- Node `24.15.0`
+- Postgres with the `pgvector` extension (e.g. [Neon](https://neon.tech) free tier)
 - A [Google AI Studio](https://aistudio.google.com) API key (`GEMINI_API_KEY`)
 
 ---
@@ -48,7 +48,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env   # set DATABASE_URL and GEMINI_API_KEY
-alembic upgrade head   # apply migrations
+set -a && source .env && set +a && alembic upgrade head   # apply migrations
 uvicorn app.main:app --reload   # starts on :8000
 ```
 
@@ -61,7 +61,7 @@ npm run dev   # starts on :3000
 
 **Run tests:**
 ```bash
-cd backend && pytest -v   # 135 tests
+cd backend && pytest -v
 ```
 
 ---
@@ -82,6 +82,8 @@ python -m app.ingestion.pipeline --game hades
 python -m app.ingestion.pipeline --game hades2
 ```
 
+On Fandom wikis, the scraper uses the live `robots.txt` whenever it can fetch it directly. If Cloudflare serves `robots.txt` behind a browser challenge, Loresmith falls back to a conservative Fandom policy that only permits article and `api.php?action=...` fetches and still blocks the obvious non-content namespaces.
+
 The embedder defaults to the local `bge-base-en-v1.5` model (downloaded on first run to `~/.cache/huggingface/`). To use Gemini embeddings instead, set `EMBEDDING_BACKEND=gemini`. **Do not mix backends across ingest and query — the two embedding spaces are incompatible.**
 
 ---
@@ -89,9 +91,8 @@ The embedder defaults to the local `bge-base-en-v1.5` model (downloaded on first
 ## Adding a game
 
 1. Create `backend/app/adapters/<game>.py` implementing the `GameAdapter` protocol (`app/adapters/base.py`).
-2. Add the adapter to `adapter_map` in `app/ingestion/pipeline.py` and `--game` choices in the argparse block.
-3. Add the game slug and display name to `_GAMES` in `app/main.py`.
-4. Run ingestion with `--game <slug>`.
+2. Add the adapter class to `_ADAPTER_CLASSES` in `backend/app/games.py`.
+3. Run ingestion with `--game <slug>`.
 
 ---
 
