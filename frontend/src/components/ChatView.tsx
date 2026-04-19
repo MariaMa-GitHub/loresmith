@@ -25,7 +25,7 @@ export function ChatView({
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [spoilerTier, setSpoilerTier] = useState(0);
+  const [spoilerTier, setSpoilerTier] = useState(3);
   const bottomRef = useRef<HTMLDivElement>(null);
   const activeRequestIdRef = useRef(0);
   const activeAbortControllerRef = useRef<AbortController | null>(null);

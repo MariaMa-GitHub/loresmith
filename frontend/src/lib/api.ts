@@ -88,7 +88,7 @@ interface StreamChatOptions {
 export async function* streamChat({
   game,
   question,
-  spoilerTier = 0,
+  spoilerTier = 3,
   sessionId,
   history = [],
   signal,
