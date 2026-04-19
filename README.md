@@ -2,7 +2,7 @@
 
 A free-to-use, open-source RAG (Retrieval-Augmented Generation) platform for video-game lore. Ask natural-language questions about a game and get grounded answers with inline citations, spoiler-tier filtering, and multi-turn chat — all backed by wiki content retrieved at query time. Currently supports **Hades** and **Hades II**, with a pluggable adapter interface for adding more games.
 
-**Status:** Active development. HTTP APIs, database schemas, environment variables, and CLI behavior may change between revisions without a deprecation period. This document describes the implementation as it stands; it does not assert production readiness, security review, or semver-level interface stability.
+**Status:** Active development. HTTP APIs, database schemas, environment variables, and CLI behavior may change between revisions without a deprecation period. This document describes the implementation as it stands; it does not assert production readiness, security review, or SemVer-level interface stability.
 
 ---
 
