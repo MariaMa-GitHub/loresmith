@@ -1,4 +1,9 @@
-"""Structural smoke test for migration 007."""
+"""Structural smoke test for migration 007.
+
+Matches the repo's existing migration-test style: discover the revision via
+Alembic's script directory and load the module from disk. Full upgrade coverage
+stays in tests/db/test_migration.py when MIGRATION_TEST_DATABASE_URL is set.
+"""
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
