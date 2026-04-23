@@ -42,6 +42,10 @@ def test_semantic_cache_has_embedding_column():
     cols = {c.key for c in SemanticCache.__table__.columns}
     assert "query_embedding" in cols
     assert "game_slug" in cols
+    assert "corpus_revision" in cols
+    assert "max_spoiler_tier" in cols
+    assert "embedding_backend" in cols
+    assert "embedding_model" in cols
 
 
 def test_chat_message_references_chat_session():
