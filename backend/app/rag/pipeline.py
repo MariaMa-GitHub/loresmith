@@ -7,7 +7,9 @@ from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.rag.citations import normalize_answer_citations
+from app.rag.refusal import RefusalPayload
 from app.rag.rewriter import QueryRewriter
+from app.rag.verifier import VerifierVerdict
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.dense import DenseRetriever
 from app.retrieval.hybrid import rrf_fuse
@@ -35,6 +37,9 @@ class RAGResponse:
     answer: str
     passages: list[dict]  # [{passage_id, content, source_url}]
     citations: list[dict] = field(default_factory=list)
+    status: str = "answered"   # "answered" | "insufficient_evidence"
+    refusal: RefusalPayload | None = None
+    verifier_verdict: VerifierVerdict | None = None
 
 
 class RAGPipeline:
