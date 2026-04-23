@@ -30,6 +30,7 @@ class Services:
     dense: DenseRetriever
     router: LLMRouter
     reranker: object
+    semantic_cache: object = None
 
 
 @dataclass(frozen=True)
@@ -40,11 +41,21 @@ class CorpusRevision:
 
 
 def build_services() -> Services:
+    from app.rag.semantic_cache import SemanticCache, corpus_revision_key  # noqa: F401 — lazy to avoid circular
+
     settings = get_settings()
     reranker = (
         CrossEncoderReranker(model_name=settings.reranker_model)
         if settings.reranker_enabled
         else NullReranker()
+    )
+    cache = (
+        SemanticCache(
+            similarity_threshold=settings.semantic_cache_threshold,
+            lookup_limit=settings.semantic_cache_lookup_limit,
+        )
+        if settings.semantic_cache_enabled
+        else None
     )
     return Services(
         settings=settings,
@@ -57,7 +68,14 @@ def build_services() -> Services:
         dense=DenseRetriever(),
         router=build_llm_router(settings),
         reranker=reranker,
+        semantic_cache=cache,
     )
+
+
+async def resolve_corpus_revision_key(session, game_slug: str) -> str:
+    from app.rag.semantic_cache import corpus_revision_key
+    revision = await get_corpus_revision(session, game_slug)
+    return corpus_revision_key(revision)
 
 
 async def build_bm25(session, game_slug: str) -> tuple[BM25Index, dict[int, str]]:

@@ -55,6 +55,8 @@ class RAGPipeline:
         retrieve_top_k: int = 10,
         rerank_candidates: int = 20,
         final_top_k: int = 5,
+        semantic_cache=None,               # SemanticCache | None
+        corpus_revision_fn=None,           # (session, game_slug) -> awaitable[str] | str
     ) -> None:
         self._embedder = embedder
         self._bm25 = bm25_index
@@ -69,6 +71,8 @@ class RAGPipeline:
         self._retrieve_top_k = retrieve_top_k
         self._rerank_candidates = rerank_candidates
         self._final_top_k = final_top_k
+        self._cache = semantic_cache
+        self._corpus_revision_fn = corpus_revision_fn
 
     async def _retrieve(
         self,
@@ -197,23 +201,97 @@ class RAGPipeline:
         max_spoiler_tier: int = 0,
         history: list[dict] | None = None,
     ) -> RAGResponse:
-        messages, passages = await self.prepare_messages(
-            session,
-            question,
-            max_spoiler_tier,
-            history,
-        )
+        effective_question = await self._effective_question(question, history)
+        revision = await self._resolve_corpus_revision(session)
+
+        cached = await self._lookup_cache(session, effective_question, revision, max_spoiler_tier)
+        if cached is not None:
+            return cached
+
+        passages = await self._retrieve(session, effective_question, max_spoiler_tier)
+        prompt = self._build_prompt(effective_question, passages)
+        messages = [{"role": "user", "content": prompt}]
 
         with self._tracer.trace(
             "rag.generate",
             metadata={"game": self._game_slug, "model": getattr(self._llm, "model_name", "")},
         ) as span:
-            answer = await self._llm.complete(messages)
-            span.set_output(answer)
-        normalized = normalize_answer_citations(answer, passages=passages)
-        return RAGResponse(
+            answer_text = await self._llm.complete(messages)
+            span.set_output(answer_text)
+
+        normalized = normalize_answer_citations(answer_text, passages=passages)
+        response = RAGResponse(
             answer=normalized.answer,
             passages=passages,
             citations=normalized.citations,
+        )
+
+        await self._store_in_cache(session, effective_question, revision, max_spoiler_tier, response)
+        return response
+
+    async def _resolve_corpus_revision(self, session) -> str | None:
+        if self._cache is None or self._corpus_revision_fn is None:
+            return None
+        value = self._corpus_revision_fn(session, self._game_slug)
+        if hasattr(value, "__await__"):
+            value = await value
+        return value
+
+    def _cache_identity(self) -> tuple[str, str] | None:
+        backend, model = _embedder_identity(self._embedder)
+        if backend is None or model is None:
+            return None
+        return backend, model
+
+    async def _lookup_cache(
+        self, session, question: str, revision: str | None, max_spoiler_tier: int
+    ) -> RAGResponse | None:
+        identity = self._cache_identity()
+        if self._cache is None or revision is None or identity is None:
+            return None
+        embedding_backend, embedding_model = identity
+        embeddings = await self._embedder.embed([question])
+        hit = await self._cache.get(
+            session=session,
+            game_slug=self._game_slug,
+            corpus_revision=revision,
+            max_spoiler_tier=max_spoiler_tier,
+            embedding_backend=embedding_backend,
+            embedding_model=embedding_model,
+            query_embedding=embeddings[0],
+        )
+        if hit is None:
+            return None
+        return RAGResponse(
+            answer=hit.answer,
+            passages=hit.passages,
+            citations=hit.citations,
+        )
+
+    async def _store_in_cache(
+        self,
+        session,
+        question: str,
+        revision: str | None,
+        max_spoiler_tier: int,
+        response: RAGResponse,
+    ) -> None:
+        identity = self._cache_identity()
+        if self._cache is None or revision is None or identity is None:
+            return
+        embedding_backend, embedding_model = identity
+        embeddings = await self._embedder.embed([question])
+        await self._cache.put(
+            session=session,
+            game_slug=self._game_slug,
+            corpus_revision=revision,
+            max_spoiler_tier=max_spoiler_tier,
+            embedding_backend=embedding_backend,
+            embedding_model=embedding_model,
+            query_text=question,
+            query_embedding=embeddings[0],
+            answer=response.answer,
+            passages=response.passages,
+            citations=response.citations,
         )
 
