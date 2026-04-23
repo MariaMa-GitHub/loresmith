@@ -51,7 +51,9 @@ class RAGPipeline:
         tracer=None,
         bm25_source_map: dict[int, str] | None = None,
         rewriter: QueryRewriter | None = None,
+        reranker=None,  # must satisfy Reranker protocol; None = no-op
         retrieve_top_k: int = 10,
+        rerank_candidates: int = 20,
         final_top_k: int = 5,
     ) -> None:
         self._embedder = embedder
@@ -63,7 +65,9 @@ class RAGPipeline:
         self._tracer = tracer or noop_tracer()
         self._bm25_source_map = bm25_source_map or {}
         self._rewriter = rewriter
+        self._reranker = reranker
         self._retrieve_top_k = retrieve_top_k
+        self._rerank_candidates = rerank_candidates
         self._final_top_k = final_top_k
 
     async def _retrieve(
@@ -98,22 +102,37 @@ class RAGPipeline:
             fused = rrf_fuse(
                 bm25_hits=bm25_hits,
                 dense_hits=dense_hits,
-                top_k=self._final_top_k,
+                top_k=self._rerank_candidates,
                 bm25_source_map=self._bm25_source_map,
             )
+
+            if self._reranker is not None:
+                with self._tracer.trace(
+                    "rag.rerank",
+                    metadata={"game": self._game_slug, "candidates": len(fused)},
+                ) as rerank_span:
+                    reranked = await self._reranker.rerank(
+                        query=question, hits=fused, top_k=self._final_top_k,
+                    )
+                    rerank_span.set_output({"num_reranked": len(reranked)})
+                    top = reranked
+            else:
+                top = fused[: self._final_top_k]
+
             passages = [
                 {
                     "passage_id": h.passage_id,
                     "content": h.content,
                     "source_url": h.source_url,
                 }
-                for h in fused
+                for h in top
             ]
             span.set_output(
                 {
                     "num_bm25": len(bm25_hits),
                     "num_dense": len(dense_hits),
-                    "num_fused": len(passages),
+                    "num_fused": len(fused),
+                    "num_returned": len(passages),
                 }
             )
             return passages

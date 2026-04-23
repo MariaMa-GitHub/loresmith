@@ -82,7 +82,9 @@ async def _get_pipeline(session, game_slug: str) -> RAGPipeline:
                     llm=svc.router.for_task(TaskType.REWRITE),
                     tracer=svc.tracer,
                 ),
+                reranker=svc.reranker,
                 retrieve_top_k=svc.settings.retrieval_top_k_per_method,
+                rerank_candidates=svc.settings.rerank_candidates,
                 final_top_k=svc.settings.retrieval_top_k_final,
             ),
         )
