@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -6,6 +7,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.llm.tools import ToolCall
 from app.rag.citations import normalize_answer_citations
 from app.rag.refusal import RefusalPayload, build_refusal
 from app.rag.rewriter import QueryRewriter
@@ -63,6 +65,9 @@ class RAGPipeline:
         semantic_cache=None,               # SemanticCache | None
         corpus_revision_fn=None,           # (session, game_slug) -> awaitable[str] | str
         verifier=None,                     # Verifier | None
+        tool_dispatcher=None,              # ToolDispatcher | None
+        tool_definitions=None,             # list[ToolDefinition] | None
+        tool_loop_max_iters: int = 3,
     ) -> None:
         self._embedder = embedder
         self._bm25 = bm25_index
@@ -80,6 +85,9 @@ class RAGPipeline:
         self._cache = semantic_cache
         self._corpus_revision_fn = corpus_revision_fn
         self._verifier = verifier
+        self._tool_dispatcher = tool_dispatcher
+        self._tool_definitions = tool_definitions or []
+        self._tool_loop_max_iters = tool_loop_max_iters
 
     async def _retrieve(
         self,
@@ -223,7 +231,14 @@ class RAGPipeline:
             "rag.generate",
             metadata={"game": self._game_slug, "model": getattr(self._llm, "model_name", "")},
         ) as span:
-            answer_text = await self._llm.complete(messages)
+            if self._tool_dispatcher is not None and self._tool_definitions:
+                if not hasattr(self._llm, "complete_with_tools"):
+                    raise RuntimeError(
+                        "Tool use requires an answer provider with complete_with_tools support"
+                    )
+                answer_text = await self._run_tool_loop(session, messages)
+            else:
+                answer_text = await self._llm.complete(messages)
             span.set_output(answer_text)
 
         normalized = normalize_answer_citations(answer_text, passages=passages)
@@ -323,4 +338,26 @@ class RAGPipeline:
             passages=response.passages,
             citations=response.citations,
         )
+
+    async def _run_tool_loop(self, session, messages: list[dict]) -> str:
+        tools = [
+            {"name": t.name, "description": t.description, "parameters": t.parameters}
+            for t in self._tool_definitions
+        ]
+        for _ in range(self._tool_loop_max_iters):
+            text, tool_calls = await self._llm.complete_with_tools(messages, tools)
+            if text is not None:
+                return text
+            if not tool_calls:
+                return ""
+            for call in tool_calls:
+                result = await self._tool_dispatcher.run(
+                    session=session,
+                    call=ToolCall(name=call["name"], arguments=call.get("arguments", {})),
+                )
+                messages.append({
+                    "role": "user",
+                    "content": f"Tool {call['name']} result: {json.dumps(result)}",
+                })
+        return await self._llm.complete(messages)
 

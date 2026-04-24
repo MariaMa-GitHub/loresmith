@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # Verifier
     verifier_enabled: bool = True
 
+    # Tool use
+    tools_enabled: bool = True
+    tool_loop_max_iters: int = Field(default=3, ge=1, le=8)
+
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
     ollama_strong_model: str = "qwen2.5:7b"

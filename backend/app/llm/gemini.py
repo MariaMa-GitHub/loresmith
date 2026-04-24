@@ -38,6 +38,37 @@ class GeminiProvider:
         )
         return response.text
 
+    async def complete_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        system: str | None = None,
+    ) -> tuple[str | None, list[dict]]:
+        contents = _to_gemini_contents(messages)
+        cfg = types.GenerateContentConfig(
+            system_instruction=system if system else None,
+            tools=[types.Tool(function_declarations=[
+                types.FunctionDeclaration(**t) for t in tools
+            ])],
+        )
+        response = await self._client.aio.models.generate_content(
+            model=self.model_name, contents=contents, config=cfg,
+        )
+        tool_calls: list[dict] = []
+        text_parts: list[str] = []
+        for candidate in response.candidates or []:
+            for part in (candidate.content.parts or []):
+                if getattr(part, "function_call", None):
+                    fc = part.function_call
+                    tool_calls.append({
+                        "name": fc.name,
+                        "arguments": dict(fc.args or {}),
+                    })
+                elif getattr(part, "text", None):
+                    text_parts.append(part.text)
+        text = "".join(text_parts) if not tool_calls else None
+        return text, tool_calls
+
     async def stream(
         self,
         messages: list[dict],

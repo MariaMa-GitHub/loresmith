@@ -28,6 +28,7 @@ from app.ingestion.pipeline import make_embedder, run_ingestion
 from app.ingestion.scraper import Scraper
 from app.ingestion.spoiler_tagger import SpoilerTagger
 from app.llm.base import TaskType
+from app.llm.tools import build_default_tools
 from app.rag.citations import normalize_answer_citations
 from app.rag.pipeline import RAGPipeline
 from app.rag.rewriter import QueryRewriter
@@ -72,6 +73,16 @@ async def _get_pipeline(session, game_slug: str) -> RAGPipeline:
 
         svc: Services = app.state.services
         bm25, source_map = await build_bm25(session, game_slug)
+        entity_schema = ADAPTERS[game_slug].entity_schema
+        allowed_entity_types = {t.name for t in entity_schema}
+        dispatcher = (
+            svc.tool_dispatcher_factory(game_slug, allowed_entity_types)
+            if svc.tool_dispatcher_factory is not None and allowed_entity_types else None
+        )
+        tool_defs = (
+            build_default_tools(game_slug=game_slug, entity_schema=entity_schema)
+            if dispatcher else None
+        )
         cache[game_slug] = _PipelineCacheEntry(
             revision=revision,
             pipeline=RAGPipeline(
@@ -94,6 +105,9 @@ async def _get_pipeline(session, game_slug: str) -> RAGPipeline:
                 semantic_cache=svc.semantic_cache,
                 corpus_revision_fn=resolve_corpus_revision_key,
                 verifier=svc.verifier,
+                tool_dispatcher=dispatcher,
+                tool_definitions=tool_defs,
+                tool_loop_max_iters=svc.settings.tool_loop_max_iters,
             ),
         )
     return cache[game_slug].pipeline

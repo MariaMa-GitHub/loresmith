@@ -402,3 +402,83 @@ async def test_answer_returns_refusal_when_verifier_rejects(monkeypatch):
     assert response.status == "insufficient_evidence"
     assert response.refusal is not None
     assert response.refusal.rewrite_suggestions == ["Ask about Zeus's canonical siblings."]
+
+
+@pytest.mark.asyncio
+async def test_answer_runs_tool_loop_and_returns_final_text(monkeypatch):
+    from app.rag.pipeline import RAGPipeline
+    from app.llm.tools import ToolDefinition
+
+    class _LLM:
+        model_name = "fake"
+        calls = []
+        async def complete_with_tools(self, messages, tools):
+            self.calls.append(list(messages))
+            if len(self.calls) == 1:
+                return None, [{"name": "entity_lookup", "arguments": {"slug": "zag"}}]
+            return "Based on the tool output, Zagreus is the Prince of the Underworld [1].", []
+        async def complete(self, messages, system=None):
+            raise AssertionError("plain complete must not be called when tools succeed")
+
+    class _Dispatcher:
+        async def run(self, *, session, call):
+            return {"name": "Zagreus", "entity_type": "character"}
+
+    class _Embedder:
+        backend_name = "local"; model_name = "bge-base"
+        async def embed(self, texts): return [[0.1] * 768]
+
+    class _Dense:
+        async def search(self, **kw): return []
+
+    class _BM25:
+        def search(self, *a, **kw): return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(), bm25_index=_BM25(), dense_retriever=_Dense(),
+        llm=_LLM(), game_slug="hades", game_display_name="Hades",
+        tool_dispatcher=_Dispatcher(),
+        tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
+        tool_loop_max_iters=3,
+    )
+    async def fake_retrieve(*args, **kwargs):
+        return [{"passage_id": 1, "content": "Zagreus …", "source_url": "u"}]
+
+    monkeypatch.setattr(p, "_retrieve", fake_retrieve)
+    response = await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)
+    assert "Zagreus" in response.answer
+
+
+@pytest.mark.asyncio
+async def test_answer_raises_when_tools_enabled_but_provider_lacks_tool_support():
+    from app.rag.pipeline import RAGPipeline
+    from app.llm.tools import ToolDefinition
+
+    class _LLM:
+        model_name = "fake-plain"
+        async def complete(self, messages, system=None):
+            return "plain answer"
+
+    class _Dispatcher:
+        async def run(self, *, session, call):
+            raise AssertionError("dispatcher must not run when provider lacks tool support")
+
+    class _Embedder:
+        backend_name = "local"; model_name = "bge-base"
+        async def embed(self, texts): return [[0.1] * 768]
+
+    class _Dense:
+        async def search(self, **kw): return []
+
+    class _BM25:
+        def search(self, *a, **kw): return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(), bm25_index=_BM25(), dense_retriever=_Dense(),
+        llm=_LLM(), game_slug="hades", game_display_name="Hades",
+        tool_dispatcher=_Dispatcher(),
+        tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
+        tool_loop_max_iters=3,
+    )
+    with pytest.raises(RuntimeError, match="complete_with_tools support"):
+        await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)

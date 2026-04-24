@@ -28,6 +28,7 @@ def _install_fake_app_state():
             retrieval_top_k_per_method=10,
             retrieval_top_k_final=5,
             rerank_candidates=20,
+            tool_loop_max_iters=3,
         ),
         tracer="tracer",
         embedder="embedder",
@@ -36,6 +37,7 @@ def _install_fake_app_state():
         reranker="reranker",
         semantic_cache="cache",
         verifier="verifier",
+        tool_dispatcher_factory=lambda slug, allowed_types: "dispatcher",
     )
     main_module.app.state.pipeline_cache = {}
     main_module.app.state.pipeline_lock = asyncio.Lock()

@@ -13,6 +13,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 
 from app.config import Settings, get_settings
+from app.llm.tools import ToolDispatcher
 from app.db.models import Passage
 from app.ingestion.pipeline import Embedder, make_embedder
 from app.llm.base import TaskType
@@ -33,6 +34,7 @@ class Services:
     reranker: object
     semantic_cache: object = None
     verifier: object = None
+    tool_dispatcher_factory: object = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,13 @@ def build_services() -> Services:
         if settings.verifier_enabled
         else None
     )
+    tool_dispatcher_factory = (
+        (lambda slug, allowed_types: ToolDispatcher(
+            game_slug=slug,
+            allowed_entity_types=allowed_types,
+        ))
+        if settings.tools_enabled else None
+    )
     return Services(
         settings=settings,
         tracer=tracer,
@@ -80,6 +89,7 @@ def build_services() -> Services:
         reranker=reranker,
         semantic_cache=cache,
         verifier=verifier,
+        tool_dispatcher_factory=tool_dispatcher_factory,
     )
 
 
