@@ -35,6 +35,7 @@ def _install_fake_app_state():
         router=_FakeRouter(),
         reranker="reranker",
         semantic_cache="cache",
+        verifier="verifier",
     )
     main_module.app.state.pipeline_cache = {}
     main_module.app.state.pipeline_lock = asyncio.Lock()

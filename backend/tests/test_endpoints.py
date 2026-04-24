@@ -57,22 +57,18 @@ async def test_chat_endpoint_streams_sse_tokens(client, monkeypatch):
     """Inject a stubbed pipeline + fake session factory so no DB/LLM is needed."""
 
     class _StubPipeline:
-        async def prepare_messages(self, session, question, max_spoiler_tier=0, history=None):
-            return (
-                [{"role": "user", "content": f"Prompt for {question}"}],
-                [
+        async def answer(self, session, question, max_spoiler_tier=0, history=None):
+            from app.rag.pipeline import RAGResponse
+            return RAGResponse(
+                answer="Hello world [1]",
+                passages=[
                     {"passage_id": 1, "source_url": "https://x.com/1", "content": "Nyx\n\nctx1"},
-                    {
-                        "passage_id": 2,
-                        "source_url": "https://x.com/2",
-                        "content": "Persephone\n\nctx2",
-                    },
+                    {"passage_id": 2, "source_url": "https://x.com/2", "content": "Persephone\n\nctx2"},
+                ],
+                citations=[
+                    {"index": 1, "passage_id": 2, "source_url": "https://x.com/2", "title": "Persephone"},
                 ],
             )
-
-        async def stream_messages(self, messages):
-            for tok in ["Hello ", "world [2]"]:
-                yield tok
 
     class _FakeSession:
         def __init__(self):
@@ -121,7 +117,7 @@ async def test_chat_endpoint_streams_sse_tokens(client, monkeypatch):
     assert "session_id" in types
     assert types[-1] == "done"
     streamed = "".join(e["content"] for e in events if e["type"] == "token")
-    assert streamed == "Hello world [2]"
+    assert streamed == "Hello world [1]"
     answer_event = next(e for e in events if e["type"] == "answer")
     assert answer_event["content"] == "Hello world [1]"
     citations_event = next(e for e in events if e["type"] == "citations")
@@ -144,14 +140,9 @@ async def test_chat_accepts_history_field(client, monkeypatch):
     """/chat must accept a history list and begin streaming without error."""
 
     class _StubPipeline:
-        async def prepare_messages(self, session, question, max_spoiler_tier=0, history=None):
-            return (
-                [{"role": "user", "content": "prompt"}],
-                [{"passage_id": 1, "source_url": "https://x.com/1", "content": "ctx"}],
-            )
-
-        async def stream_messages(self, messages):
-            yield "ok"
+        async def answer(self, session, question, max_spoiler_tier=0, history=None):
+            from app.rag.pipeline import RAGResponse
+            return RAGResponse(answer="ok", passages=[], citations=[])
 
     class _FakeSession:
         async def __aenter__(self): return self
@@ -200,26 +191,18 @@ async def test_chat_accepts_history_field(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_chat_endpoint_dedupes_same_source_url_citations(client, monkeypatch):
     class _StubPipeline:
-        async def prepare_messages(self, session, question, max_spoiler_tier=0, history=None):
-            return (
-                [{"role": "user", "content": "prompt"}],
-                [
-                    {
-                        "passage_id": 1,
-                        "source_url": "https://x.com/zagreus",
-                        "content": "Zagreus\n\nctx1",
-                    },
-                    {
-                        "passage_id": 2,
-                        "source_url": "https://x.com/zagreus",
-                        "content": "Zagreus\n\nctx2",
-                    },
+        async def answer(self, session, question, max_spoiler_tier=0, history=None):
+            from app.rag.pipeline import RAGResponse
+            return RAGResponse(
+                answer="Zagreus [1]",
+                passages=[
+                    {"passage_id": 1, "source_url": "https://x.com/zagreus", "content": "Zagreus\n\nctx1"},
+                    {"passage_id": 2, "source_url": "https://x.com/zagreus", "content": "Zagreus\n\nctx2"},
+                ],
+                citations=[
+                    {"index": 1, "passage_id": 1, "source_url": "https://x.com/zagreus", "title": "Zagreus"},
                 ],
             )
-
-        async def stream_messages(self, messages):
-            for tok in ["Zagreus ", "[1][2]"]:
-                yield tok
 
     class _FakeSession:
         def __init__(self):
@@ -276,14 +259,9 @@ async def test_chat_endpoint_dedupes_same_source_url_citations(client, monkeypat
 @pytest.mark.asyncio
 async def test_chat_endpoint_round_trips_session_id(client, monkeypatch):
     class _StubPipeline:
-        async def prepare_messages(self, session, question, max_spoiler_tier=0, history=None):
-            return (
-                [{"role": "user", "content": "prompt"}],
-                [{"passage_id": 1, "source_url": "https://x.com/1", "content": "ctx"}],
-            )
-
-        async def stream_messages(self, messages):
-            yield "ok"
+        async def answer(self, session, question, max_spoiler_tier=0, history=None):
+            from app.rag.pipeline import RAGResponse
+            return RAGResponse(answer="ok", passages=[], citations=[])
 
     class _FakeSession:
         async def __aenter__(self): return self
@@ -368,20 +346,9 @@ async def test_chat_endpoint_rejects_cross_game_session_id(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_chat_endpoint_touches_session_timestamp_on_reuse(client, monkeypatch):
     class _StubPipeline:
-        async def prepare_messages(
-            self,
-            session,
-            question,
-            max_spoiler_tier=0,
-            history=None,
-        ):
-            return (
-                [{"role": "user", "content": "prompt"}],
-                [{"passage_id": 1, "source_url": "https://x.com/1", "content": "ctx"}],
-            )
-
-        async def stream_messages(self, messages):
-            yield "ok"
+        async def answer(self, session, question, max_spoiler_tier=0, history=None):
+            from app.rag.pipeline import RAGResponse
+            return RAGResponse(answer="ok", passages=[], citations=[])
 
     class _FakeSession:
         def __init__(self):
@@ -556,16 +523,11 @@ async def test_chat_endpoint_uses_persisted_history_for_existing_session(client,
     captured_history = None
 
     class _StubPipeline:
-        async def prepare_messages(self, session, question, max_spoiler_tier=0, history=None):
+        async def answer(self, session, question, max_spoiler_tier=0, history=None):
             nonlocal captured_history
             captured_history = history
-            return (
-                [{"role": "user", "content": "prompt"}],
-                [{"passage_id": 1, "source_url": "https://x.com/1", "content": "ctx"}],
-            )
-
-        async def stream_messages(self, messages):
-            yield "ok"
+            from app.rag.pipeline import RAGResponse
+            return RAGResponse(answer="ok", passages=[], citations=[])
 
     history_rows = [
         SimpleNamespace(role="user", content="Tell me about Nyx."),
@@ -634,14 +596,7 @@ async def test_chat_endpoint_does_not_persist_partial_assistant_on_stream_error(
     client, monkeypatch,
 ):
     class _StubPipeline:
-        async def prepare_messages(self, session, question, max_spoiler_tier=0, history=None):
-            return (
-                [{"role": "user", "content": "prompt"}],
-                [{"passage_id": 1, "source_url": "https://x.com/1", "content": "ctx"}],
-            )
-
-        async def stream_messages(self, messages):
-            yield "partial "
+        async def answer(self, session, question, max_spoiler_tier=0, history=None):
             raise RuntimeError("boom")
 
     class _FakeSession:
@@ -692,6 +647,119 @@ async def test_chat_endpoint_does_not_persist_partial_assistant_on_stream_error(
         isinstance(item, ChatMessage) and item.role == "assistant"
         for item in fake_session.added
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_refusal_event_when_pipeline_returns_refusal(client, monkeypatch):
+    from app.rag.pipeline import RAGResponse
+    from app.rag.refusal import RefusalPayload
+
+    class _StubPipeline:
+        async def answer(self, session, question, max_spoiler_tier=0, history=None):
+            return RAGResponse(
+                answer="I don't have enough evidence.",
+                passages=[],
+                citations=[],
+                status="insufficient_evidence",
+                refusal=RefusalPayload(
+                    message="I don't have enough evidence.",
+                    unsupported_claims=["unsupported"],
+                    rewrite_suggestions=["Ask something else"],
+                ),
+            )
+
+    class _FakeSession:
+        def __init__(self):
+            self.added = []
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def execute(self, *a, **kw): return None
+        async def commit(self): return None
+        def add(self, value): self.added.append(value)
+
+    fake_session = _FakeSession()
+
+    def _fake_session_factory():
+        return lambda: fake_session
+
+    async def _fake_get_pipeline(session, game_slug):
+        return _StubPipeline()
+
+    from app import main as main_module
+    monkeypatch.setattr(main_module, "_get_pipeline", _fake_get_pipeline)
+    monkeypatch.setattr(main_module, "get_session_factory", _fake_session_factory)
+
+    async with client.stream(
+        "POST", "/chat", json={"game": "hades", "question": "q"}
+    ) as response:
+        assert response.status_code == 200
+        body = b""
+        async for chunk in response.aiter_bytes():
+            body += chunk
+
+    events = [
+        json.loads(line[len("data: "):])
+        for line in body.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    kinds = {e["type"] for e in events}
+    assert "refusal" in kinds
+    assert "answer" not in kinds
+    assert "token" not in kinds
+    refusal_event = next(e for e in events if e["type"] == "refusal")
+    assert refusal_event["content"]["rewrite_suggestions"] == ["Ask something else"]
+
+    assistant_message = next(
+        item for item in fake_session.added
+        if isinstance(item, ChatMessage) and item.role == "assistant"
+    )
+    assert assistant_message.response_meta["message_type"] == "refusal"
+    assert assistant_message.response_meta["refusal"]["rewrite_suggestions"] == ["Ask something else"]
+
+
+@pytest.mark.asyncio
+async def test_session_messages_round_trip_refusal_payload(client, monkeypatch):
+    import datetime
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def get(self, model, pk):
+            return ChatSession(
+                id=pk, owner_token="owner-tok", game_slug="hades", is_logging_opted_out=False
+            )
+        async def execute(self, *a, **kw):
+            rows = [
+                SimpleNamespace(
+                    role="assistant",
+                    content="I don't have enough evidence.",
+                    citations=[],
+                    response_meta={
+                        "message_type": "refusal",
+                        "refusal": {
+                            "message": "I don't have enough evidence.",
+                            "rewrite_suggestions": ["Ask something else"],
+                            "unsupported_claims": ["claim"],
+                        },
+                    },
+                    created_at=datetime.datetime(2026, 4, 18, 0, 0, 0),
+                )
+            ]
+            return SimpleNamespace(all=lambda: rows)
+        async def commit(self): return None
+        def add(self, *a, **kw): return None
+
+    def _fake_session_factory():
+        return _FakeSession
+
+    from app import main as main_module
+    monkeypatch.setattr(main_module, "get_session_factory", _fake_session_factory)
+    client.cookies.set(_ANON_COOKIE, "owner-tok")
+
+    response = await client.get("/sessions/sess-1/messages")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["messages"][0]["refusal"]["rewrite_suggestions"] == ["Ask something else"]
 
 
 # ---------------------------------------------------------------------------

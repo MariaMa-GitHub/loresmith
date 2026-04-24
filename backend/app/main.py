@@ -43,6 +43,10 @@ from app.services import (
 logger = logging.getLogger(__name__)
 
 
+def _chunk_text_for_sse(text: str, chunk_size: int = 32) -> list[str]:
+    return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)] or [""]
+
+
 @dataclass
 class _PipelineCacheEntry:
     revision: CorpusRevision
@@ -89,6 +93,7 @@ async def _get_pipeline(session, game_slug: str) -> RAGPipeline:
                 final_top_k=svc.settings.retrieval_top_k_final,
                 semantic_cache=svc.semantic_cache,
                 corpus_revision_fn=resolve_corpus_revision_key,
+                verifier=svc.verifier,
             ),
         )
     return cache[game_slug].pipeline
@@ -308,6 +313,7 @@ async def get_session_messages(
                 ChatMessage.role,
                 ChatMessage.content,
                 ChatMessage.citations,
+                ChatMessage.response_meta,
                 ChatMessage.created_at,
             )
             .where(ChatMessage.session_id == session_id)
@@ -322,11 +328,14 @@ async def get_session_messages(
                 )
             else:
                 normalized = normalize_answer_citations(row.content)
+            meta = row.response_meta or {}
+            refusal = meta.get("refusal") if isinstance(meta, dict) else None
             messages.append(
                 {
                     "role": row.role,
                     "content": normalized.answer,
                     "citations": normalized.citations,
+                    "refusal": refusal if isinstance(refusal, dict) else None,
                     "created_at": row.created_at.isoformat()
                     if row.created_at
                     else None,
@@ -359,7 +368,6 @@ async def chat(
     async def event_stream() -> AsyncIterator[str]:
         session_id = req.session_id or str(uuid.uuid4())
         session_factory = get_session_factory()
-        collected: list[str] = []
 
         async with session_factory() as session:
             history = [
@@ -370,17 +378,9 @@ async def chat(
                 history = await _load_rewrite_history(session, req.session_id)
 
             pipeline = await _get_pipeline(session, req.game)
-            messages, passages = await pipeline.prepare_messages(
-                session=session,
-                question=req.question,
-                max_spoiler_tier=req.spoiler_tier,
-                history=history,
-            )
 
-            # Persist the user turn + query log up-front so mid-stream
-            # failures don't drop the record of the question having been
-            # asked. The assistant row is written after the stream
-            # completes so it carries the final content.
+            # Persist the user turn + query log up-front so answer failures
+            # don't drop the record of the question having been asked.
             upsert_stmt = pg_insert(ChatSession).values(
                 id=session_id,
                 owner_token=owner_token,
@@ -401,44 +401,51 @@ async def chat(
             ))
             await session.commit()
 
-            stream_failed = False
-            try:
-                async for chunk in pipeline.stream_messages(messages):
-                    collected.append(chunk)
-                    yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
-            except Exception as exc:
-                stream_failed = True
-                logger.exception("Chat stream failed for session %s: %s", session_id, exc)
-                yield (
-                    f"data: {json.dumps({'type': 'error', 'content': 'stream_failed'})}\n\n"
-                )
+            yield f"data: {json.dumps({'type': 'session_id', 'content': session_id})}\n\n"
 
-            if not stream_failed:
-                assistant_text = "".join(collected)
-                normalized = normalize_answer_citations(
-                    assistant_text,
-                    passages=passages,
+            answer_failed = False
+            try:
+                response = await pipeline.answer(
+                    session=session,
+                    question=req.question,
+                    max_spoiler_tier=req.spoiler_tier,
+                    history=history,
                 )
-                yield f"data: {json.dumps({'type': 'answer', 'content': normalized.answer})}\n\n"
-                citations_event = {
-                    "type": "citations",
-                    "content": normalized.citations,
-                }
-                yield f"data: {json.dumps(citations_event)}\n\n"
+            except Exception as exc:
+                answer_failed = True
+                logger.exception("Chat answer failed for session %s: %s", session_id, exc)
+                yield f"data: {json.dumps({'type': 'error', 'content': 'stream_failed'})}\n\n"
+
+            if not answer_failed:
+                if response.status == "answered":
+                    for chunk in _chunk_text_for_sse(response.answer):
+                        if chunk:
+                            yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+                    yield f"data: {json.dumps({'type': 'answer', 'content': response.answer})}\n\n"
+                    yield f"data: {json.dumps({'type': 'citations', 'content': response.citations})}\n\n"
+                    response_meta: dict = {"message_type": "answer"}
+                else:
+                    payload = {
+                        "message": response.refusal.message,
+                        "rewrite_suggestions": response.refusal.rewrite_suggestions,
+                        "unsupported_claims": response.refusal.unsupported_claims,
+                    }
+                    yield f"data: {json.dumps({'type': 'refusal', 'content': payload})}\n\n"
+                    response_meta = {"message_type": "refusal", "refusal": payload}
 
                 session.add(ChatMessage(
                     session_id=session_id,
                     role="assistant",
-                    content=normalized.answer,
-                    citations=normalized.citations,
+                    content=response.answer,
+                    citations=response.citations,
+                    response_meta=response_meta,
                 ))
                 await session.commit()
 
-            yield f"data: {json.dumps({'type': 'session_id', 'content': session_id})}\n\n"
-            if stream_failed:
+            if answer_failed:
                 yield f"data: {json.dumps({'type': 'done', 'status': 'error'})}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'status': 'ok'})}\n\n"
 
     response = StreamingResponse(event_stream(), media_type="text/event-stream")
     if issued_owner_token and owner_token is not None:

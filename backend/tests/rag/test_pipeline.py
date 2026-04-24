@@ -348,3 +348,57 @@ async def test_answer_returns_cached_response_without_calling_llm(monkeypatch):
     response = await p.answer(session=None, question="q", max_spoiler_tier=0)
     assert response.answer == "cached"
     assert response.passages[0]["passage_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_answer_returns_refusal_when_verifier_rejects(monkeypatch):
+    from app.rag.pipeline import RAGPipeline
+    from app.rag.verifier import VerifierVerdict
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+        async def embed(self, texts):
+            return [[0.1] * 768 for _ in texts]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, *a, **kw):
+            return []
+
+    class _LLM:
+        model_name = "fake"
+        async def complete(self, *a, **kw):
+            return "Zeus has a secret third brother."
+
+    class _Verifier:
+        async def verify(self, *, question, answer, passages):
+            return VerifierVerdict(
+                is_faithful=False,
+                has_sufficient_evidence=False,
+                unsupported_claims=["Zeus has a secret third brother."],
+                rewrite_suggestions=["Ask about Zeus's canonical siblings."],
+            )
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        verifier=_Verifier(),
+    )
+
+    async def fake_retrieve(*args, **kwargs):
+        return [{"passage_id": 1, "content": "Zeus …", "source_url": "u"}]
+
+    monkeypatch.setattr(p, "_retrieve", fake_retrieve)
+
+    response = await p.answer(session=None, question="who?", max_spoiler_tier=0)
+    assert response.status == "insufficient_evidence"
+    assert response.refusal is not None
+    assert response.refusal.rewrite_suggestions == ["Ask about Zeus's canonical siblings."]

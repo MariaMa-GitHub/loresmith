@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from app.config import Settings, get_settings
 from app.db.models import Passage
 from app.ingestion.pipeline import Embedder, make_embedder
+from app.llm.base import TaskType
 from app.llm.router import LLMRouter, build_llm_router
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.dense import DenseRetriever
@@ -31,6 +32,7 @@ class Services:
     router: LLMRouter
     reranker: object
     semantic_cache: object = None
+    verifier: object = None
 
 
 @dataclass(frozen=True)
@@ -42,8 +44,15 @@ class CorpusRevision:
 
 def build_services() -> Services:
     from app.rag.semantic_cache import SemanticCache, corpus_revision_key  # noqa: F401 — lazy to avoid circular
+    from app.rag.verifier import Verifier
 
     settings = get_settings()
+    tracer = LangfuseTracer(
+        public_key=settings.langfuse_public_key,
+        secret_key=settings.langfuse_secret_key,
+        host=settings.langfuse_host,
+    )
+    router = build_llm_router(settings)
     reranker = (
         CrossEncoderReranker(model_name=settings.reranker_model)
         if settings.reranker_enabled
@@ -57,18 +66,20 @@ def build_services() -> Services:
         if settings.semantic_cache_enabled
         else None
     )
+    verifier = (
+        Verifier(llm=router.for_task(TaskType.VERIFY), tracer=tracer)
+        if settings.verifier_enabled
+        else None
+    )
     return Services(
         settings=settings,
-        tracer=LangfuseTracer(
-            public_key=settings.langfuse_public_key,
-            secret_key=settings.langfuse_secret_key,
-            host=settings.langfuse_host,
-        ),
+        tracer=tracer,
         embedder=make_embedder(settings),
         dense=DenseRetriever(),
-        router=build_llm_router(settings),
+        router=router,
         reranker=reranker,
         semantic_cache=cache,
+        verifier=verifier,
     )
 
 

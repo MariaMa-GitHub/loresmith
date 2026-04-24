@@ -61,3 +61,8 @@ def test_shared_thread_has_slug_pk():
 def test_chat_session_tracks_owner_token():
     cols = {c.key for c in ChatSession.__table__.columns}
     assert "owner_token" in cols
+
+
+def test_chat_message_has_response_meta_column():
+    cols = {c.key for c in ChatMessage.__table__.columns}
+    assert "response_meta" in cols

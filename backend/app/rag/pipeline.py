@@ -7,7 +7,7 @@ from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.rag.citations import normalize_answer_citations
-from app.rag.refusal import RefusalPayload
+from app.rag.refusal import RefusalPayload, build_refusal
 from app.rag.rewriter import QueryRewriter
 from app.rag.verifier import VerifierVerdict
 from app.retrieval.bm25 import BM25Index
@@ -62,6 +62,7 @@ class RAGPipeline:
         final_top_k: int = 5,
         semantic_cache=None,               # SemanticCache | None
         corpus_revision_fn=None,           # (session, game_slug) -> awaitable[str] | str
+        verifier=None,                     # Verifier | None
     ) -> None:
         self._embedder = embedder
         self._bm25 = bm25_index
@@ -78,6 +79,7 @@ class RAGPipeline:
         self._final_top_k = final_top_k
         self._cache = semantic_cache
         self._corpus_revision_fn = corpus_revision_fn
+        self._verifier = verifier
 
     async def _retrieve(
         self,
@@ -230,6 +232,28 @@ class RAGPipeline:
             passages=passages,
             citations=normalized.citations,
         )
+
+        if self._verifier is not None:
+            verdict = await self._verifier.verify(
+                question=effective_question,
+                answer=response.answer,
+                passages=response.passages,
+            )
+            response.verifier_verdict = verdict
+            if not verdict.is_faithful or not verdict.has_sufficient_evidence:
+                refusal = build_refusal(
+                    question=effective_question,
+                    verdict=verdict,
+                    passages=response.passages,
+                )
+                return RAGResponse(
+                    answer=refusal.message,
+                    passages=response.passages,
+                    citations=[],
+                    status="insufficient_evidence",
+                    refusal=refusal,
+                    verifier_verdict=verdict,
+                )
 
         await self._store_in_cache(session, effective_question, revision, max_spoiler_tier, response)
         return response

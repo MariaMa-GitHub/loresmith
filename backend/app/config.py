@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     semantic_cache_threshold: float = Field(default=0.92, ge=0.0, le=1.0)
     semantic_cache_lookup_limit: int = Field(default=3, ge=1)
 
+    # Verifier
+    verifier_enabled: bool = True
+
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
     ollama_strong_model: str = "qwen2.5:7b"
