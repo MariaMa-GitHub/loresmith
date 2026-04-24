@@ -1,11 +1,13 @@
 import { Fragment, type ReactNode } from "react";
 
-import type { Citation } from "@/lib/api";
+import type { ChatMessage, Citation } from "@/lib/api";
+import { InsufficientEvidenceCard } from "./InsufficientEvidenceCard";
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+  refusal?: ChatMessage["refusal"];
 }
 
 const CITATION_GROUP_RE = /\[(\d+(?:\s*,\s*\d+)*)\]/g;
@@ -108,7 +110,20 @@ function renderContent(content: string, citations: Citation[] = []) {
   return nodes;
 }
 
-export function MessageBubble({ role, content, citations = [] }: MessageBubbleProps) {
+export function MessageBubble({ role, content, citations = [], refusal }: MessageBubbleProps) {
+  if (refusal) {
+    return (
+      <div className="flex justify-start mb-3">
+        <div className="max-w-[80%]">
+          <InsufficientEvidenceCard
+            message={refusal.message}
+            rewriteSuggestions={refusal.rewrite_suggestions}
+            unsupportedClaims={refusal.unsupported_claims}
+          />
+        </div>
+      </div>
+    );
+  }
   const isUser = role === "user";
   const orderedCitations = [...citations].sort((left, right) => left.index - right.index);
   return (

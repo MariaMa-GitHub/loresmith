@@ -170,6 +170,32 @@ export function ChatView({
           });
         }
 
+        if (event.type === "refusal") {
+          if (streamFailed) {
+            continue;
+          }
+          const payload = event.content as {
+            message: string;
+            rewrite_suggestions: string[];
+            unsupported_claims: string[];
+          };
+          setMessages((prev) => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (!last || last.role !== "assistant") {
+              return prev;
+            }
+            updated[updated.length - 1] = {
+              ...last,
+              content: payload.message,
+              refusal: payload,
+              citations: [],
+            };
+            return updated;
+          });
+          continue;
+        }
+
         if (event.type === "error") {
           streamFailed = true;
           markStreamInterrupted();
@@ -215,6 +241,7 @@ export function ChatView({
             role={msg.role}
             content={msg.content}
             citations={msg.citations}
+            refusal={msg.refusal}
           />
         ))}
         <div ref={bottomRef} />

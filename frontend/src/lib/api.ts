@@ -16,6 +16,11 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+  refusal?: {
+    message: string;
+    rewrite_suggestions: string[];
+    unsupported_claims: string[];
+  };
 }
 
 interface ChatHistoryMessage {
@@ -72,6 +77,7 @@ export async function fetchSessionMessages(
       role: msg.role,
       content: msg.content,
       citations: msg.citations,
+      refusal: msg.refusal,
     })),
   };
 }
