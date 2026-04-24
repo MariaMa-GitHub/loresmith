@@ -7,14 +7,14 @@ from app.eval.source_identity import resolve_source_identities
 DATASET_PATH = Path(__file__).parent.parent / "app" / "eval" / "datasets" / "hades.jsonl"
 VALID_STRATA = {"factual", "multi_hop", "ambiguous", "adversarial"}
 MIN_STRATUM_COUNTS = {
-    "factual": 50,
-    "multi_hop": 35,
-    "ambiguous": 20,
-    "adversarial": 20,
+    "factual": 60,
+    "multi_hop": 60,
+    "ambiguous": 40,
+    "adversarial": 40,
 }
-MIN_GOLD_SOURCE_ANNOTATED = 30
-MIN_MULTI_TURN_ANNOTATED = 5
-MIN_REFUSAL_ANNOTATED = 8
+MIN_GOLD_SOURCE_ANNOTATED = 45
+MIN_MULTI_TURN_ANNOTATED = 8
+MIN_REFUSAL_ANNOTATED = 15
 
 
 def load_questions():
@@ -25,9 +25,9 @@ def test_dataset_exists():
     assert DATASET_PATH.exists(), f"Dataset not found at {DATASET_PATH}"
 
 
-def test_dataset_has_at_least_150_questions():
+def test_dataset_has_at_least_200_questions():
     questions = load_questions()
-    assert len(questions) >= 150, f"Expected >= 150 questions, got {len(questions)}"
+    assert len(questions) >= 200, f"Expected >= 200 questions, got {len(questions)}"
 
 
 def test_all_questions_have_required_fields():
@@ -64,11 +64,11 @@ def test_all_four_strata_represented():
     assert strata == VALID_STRATA, f"Not all strata represented. Found: {strata}"
 
 
-def test_dataset_is_reasonably_stratified_for_week_4_scope():
+def test_dataset_is_reasonably_stratified_for_week_5_scope():
     counts = Counter(q["stratum"] for q in load_questions())
     for stratum, minimum in MIN_STRATUM_COUNTS.items():
         assert counts[stratum] >= minimum, (
-            f"Expected at least {minimum} {stratum} questions by Week 4, "
+            f"Expected at least {minimum} {stratum} questions by Week 5, "
             f"got {counts[stratum]}"
         )
 
@@ -104,7 +104,7 @@ def test_gold_source_annotations_resolve_to_ingested_source_identities():
     )
 
 
-def test_dataset_has_meaningful_annotation_coverage_for_week_4_eval():
+def test_dataset_has_meaningful_annotation_coverage_for_week_5_eval():
     questions = load_questions()
     gold_annotated = [q for q in questions if q.get("gold_source_urls")]
     multi_turn = [q for q in questions if q.get("history")]
