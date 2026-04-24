@@ -18,6 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.base import GameAdapter
 from app.config import Settings
 from app.db.models import Passage
+from app.entities.extractor import EntityExtractor
+from app.entities.schema import ExtractedEntity
+from app.entities.store import upsert_entities
 from app.games import ADAPTERS, GAME_SLUGS
 from app.ingestion.chunker import Chunker
 from app.ingestion.embedder import GeminiEmbedder
@@ -93,6 +96,7 @@ async def run_ingestion(
     session: AsyncSession,
     dry_run: bool = False,
     spoiler_tagger: SpoilerTagger | None = None,
+    entity_extractor: EntityExtractor | None = None,
 ) -> IngestResult:
     chunker = chunker or adapter.chunker
     embedder_backend, embedder_model = _embedder_identity(embedder)
@@ -101,6 +105,7 @@ async def run_ingestion(
     pages_fetched = 0
     failed_urls: set[str] = set()
     all_chunks = []
+    extracted_entities: list[ExtractedEntity] = []
 
     for url in urls:
         page = await scraper.fetch(url)
@@ -113,6 +118,12 @@ async def run_ingestion(
         pages_fetched += 1
         chunks = chunker.chunk(page.text, url, title=page.title)
         all_chunks.extend(chunks)
+        if entity_extractor is not None:
+            extracted_entities.extend(
+                await entity_extractor.extract(
+                    page_text=page.text, source_url=url, game_slug=adapter.slug,
+                )
+            )
 
     existing_by_source: dict[str, dict[str, _ExistingPassage]] = defaultdict(dict)
     existing_result = await session.execute(
@@ -267,6 +278,11 @@ async def run_ingestion(
         if stale_ids or rows or updates:
             await session.commit()
 
+    if not dry_run and entity_extractor is not None and extracted_entities:
+        await upsert_entities(
+            session=session, game_slug=adapter.slug, entities=extracted_entities,
+        )
+
     return IngestResult(
         game_slug=adapter.slug,
         pages_fetched=pages_fetched,
@@ -309,6 +325,14 @@ async def _main(args: argparse.Namespace) -> None:
     router = build_llm_router(settings)
     spoiler_tagger = SpoilerTagger(llm=router.for_task(TaskType.TAG), tracer=tracer)
 
+    entity_extractor = None
+    if adapter.entity_schema:
+        from app.entities.extractor import EntityExtractor
+        entity_extractor = EntityExtractor(
+            llm=router.for_task(TaskType.TAG),
+            allowed_types={t.name for t in adapter.entity_schema},
+        )
+
     session_factory = get_session_factory()
     try:
         async with session_factory() as session:
@@ -320,6 +344,7 @@ async def _main(args: argparse.Namespace) -> None:
                 session=session,
                 dry_run=args.dry_run,
                 spoiler_tagger=spoiler_tagger,
+                entity_extractor=entity_extractor,
             )
     finally:
         tracer.flush()

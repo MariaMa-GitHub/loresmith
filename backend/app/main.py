@@ -479,6 +479,14 @@ async def ingest(req: IngestRequest):
     embedder = make_embedder(svc.settings)
     tagger = SpoilerTagger(llm=svc.router.for_task(TaskType.TAG), tracer=svc.tracer)
 
+    entity_extractor = None
+    if adapter.entity_schema:
+        from app.entities.extractor import EntityExtractor
+        entity_extractor = EntityExtractor(
+            llm=svc.router.for_task(TaskType.TAG),
+            allowed_types={t.name for t in adapter.entity_schema},
+        )
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         result = await run_ingestion(
@@ -489,6 +497,7 @@ async def ingest(req: IngestRequest):
             session=session,
             dry_run=req.dry_run,
             spoiler_tagger=tagger,
+            entity_extractor=entity_extractor,
         )
 
     # Invalidate the pipeline cache so the next /chat rebuilds against the
