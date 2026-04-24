@@ -12,7 +12,7 @@ A free-to-use, open-source RAG (Retrieval-Augmented Generation) platform for vid
 - **Streaming answers** — server-sent events with inline `[N]` citations linked to source passages
 - **Multi-game** — pluggable `GameAdapter` interface; currently supports Hades and Hades II
 - **Cross-encoder reranker** — BGE-based cross-encoder re-scores the top retrieval candidates before generation
-- **Semantic cache** — LRU similarity cache scoped to `(game_slug, corpus_revision)`; hits bypass the full RAG pipeline on non-streaming requests
+- **Semantic cache** — cosine-similarity cache scoped to `(game_slug, corpus_revision)`; hits bypass the full RAG pipeline on non-streaming requests; auto-invalidates on re-ingest
 - **Verifier + refusal** — post-generation faithfulness check; insufficient-evidence answers are replaced with a structured refusal card rather than surfaced verbatim
 - **Typed tool use** — `entity_lookup` and `list_entities_by_type` tools let the LLM fetch structured entity data via a bounded tool loop (≤ 3 iterations) on the non-streaming path
 - **Ablation harness** — 9-configuration matrix (baseline through full) with per-row faithfulness, recall@5, citation validity, and latency metrics; see `docs/EVAL_REPORT.md`

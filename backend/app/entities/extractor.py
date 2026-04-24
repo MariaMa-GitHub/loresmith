@@ -48,6 +48,8 @@ class EntityExtractor:
             f"Allowed entity types: {sorted(self._allowed_types)}\n\n"
             f"Source URL: {source_url}\n"
             f"Game: {game_slug}\n\n"
+            # Truncate to ~1500 tokens to bound cost; entities in the tail of long
+            # pages are silently dropped, which is acceptable for ingestion coverage.
             f"Wiki text:\n{page_text[:6000]}\n"
         )
 

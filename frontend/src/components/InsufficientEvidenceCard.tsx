@@ -41,7 +41,8 @@ export function InsufficientEvidenceCard({
               <li key={i}>
                 <button
                   type="button"
-                  className="w-full rounded border border-border px-2 py-1 text-left text-xs hover:border-primary"
+                  title="Click-to-insert coming in a future update"
+                  className="w-full cursor-default rounded border border-border px-2 py-1 text-left text-xs opacity-70"
                 >
                   {suggestion}
                 </button>

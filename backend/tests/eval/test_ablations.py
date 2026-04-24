@@ -1,8 +1,13 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
+from sqlalchemy import select
 
 from app.eval.ablations import (
     AblationConfig,
+    _reset_cache_scope,
     default_matrix,
+    provider_supports_tools,
     render_markdown_report,
 )
 
@@ -53,3 +58,40 @@ def test_render_markdown_report_marks_skipped_configs():
 def test_ablation_config_retrieval_mode_validates():
     with pytest.raises(ValueError):
         AblationConfig(config_id="bad", retrieval="trigram_only")
+
+
+def test_provider_supports_tools_true_when_method_present():
+    provider = MagicMock(spec=["complete_with_tools"])
+    assert provider_supports_tools(provider) is True
+
+
+def test_provider_supports_tools_false_when_method_absent():
+    provider = MagicMock(spec=["complete"])
+    assert provider_supports_tools(provider) is False
+
+
+@pytest.mark.asyncio
+async def test_reset_cache_scope_deletes_matching_rows_only(monkeypatch):
+    deleted_wheres = []
+
+    class FakeQuery:
+        def where(self, clause):
+            deleted_wheres.append(str(clause))
+            return self
+
+    class FakeSession:
+        async def execute(self, stmt):
+            return None
+        async def commit(self):
+            pass
+
+    monkeypatch.setattr(
+        "app.eval.ablations.delete",
+        lambda model: FakeQuery(),
+    )
+
+    await _reset_cache_scope(
+        FakeSession(), game_slug="hades", corpus_revision="312:312:2026-04-19"
+    )
+    # Both WHERE clauses were applied (game_slug and corpus_revision).
+    assert len(deleted_wheres) == 2

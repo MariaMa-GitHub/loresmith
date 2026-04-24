@@ -74,12 +74,11 @@ def render_markdown_report(*, game_slug: str, rows: list[dict]) -> str:
         "| config | faithfulness | recall@5 | citation_valid | correctness | avg_latency_ms |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
+    def fmt(x):
+        return "-" if x is None else (f"{x:.2f}" if isinstance(x, float) else str(x))
+
     for row in rows:
         m = row.get("metrics") or {}
-
-        def fmt(x):
-            return "-" if x is None else (f"{x:.2f}" if isinstance(x, float) else str(x))
-
         label = row["config_id"]
         if row.get("skipped_reason"):
             label = f"{label} (skipped: {row['skipped_reason']})"
