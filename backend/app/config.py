@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # LLM
     gemini_api_key: str = ""
     llm_backend: str = "gemini"  # gemini | ollama | auto
+    gemini_strong_model: str = "gemini-2.5-flash"
+    gemini_fast_model: str = "gemini-2.5-flash-lite"
+    gemini_min_call_interval: float = 0.0  # seconds between API calls; >0 to stay under RPM limits
 
     # Embeddings
     embedding_backend: str = "local"  # local | gemini

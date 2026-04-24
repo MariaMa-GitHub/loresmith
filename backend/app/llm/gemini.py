@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 
 from google import genai
@@ -20,15 +21,26 @@ class GeminiProvider:
 
     model_name: str
 
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str = "gemini-2.5-flash",
+        min_call_interval: float = 0.0,
+    ) -> None:
         self.model_name = model_name
+        self._min_call_interval = min_call_interval
         self._client = genai.Client(api_key=api_key)
+
+    async def _pace(self) -> None:
+        if self._min_call_interval > 0:
+            await asyncio.sleep(self._min_call_interval)
 
     async def complete(
         self,
         messages: list[dict],
         system: str | None = None,
     ) -> str:
+        await self._pace()
         contents = _to_gemini_contents(messages)
         cfg = types.GenerateContentConfig(system_instruction=system) if system else None
         response = await self._client.aio.models.generate_content(
@@ -44,6 +56,7 @@ class GeminiProvider:
         tools: list[dict],
         system: str | None = None,
     ) -> tuple[str | None, list[dict]]:
+        await self._pace()
         contents = _to_gemini_contents(messages)
         cfg = types.GenerateContentConfig(
             system_instruction=system if system else None,
@@ -74,6 +87,7 @@ class GeminiProvider:
         messages: list[dict],
         system: str | None = None,
     ) -> AsyncIterator[str]:
+        await self._pace()
         contents = _to_gemini_contents(messages)
         cfg = types.GenerateContentConfig(system_instruction=system) if system else None
         # `aio.models.generate_content_stream` is a coroutine that resolves to
