@@ -19,9 +19,7 @@ class ExtractedEntity:
 
 
 def normalize_slug(text: str) -> str:
-    lowered = text.strip().lower()
-    slugified = _SLUG_RE.sub("-", lowered).strip("-")
-    return slugified
+    return _SLUG_RE.sub("-", text.strip().lower()).strip("-")
 
 
 def validate_entity(entity: ExtractedEntity, *, allowed_types: set[str]) -> None:

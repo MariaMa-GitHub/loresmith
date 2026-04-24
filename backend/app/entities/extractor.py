@@ -9,6 +9,7 @@ from app.entities.schema import (
     normalize_slug,
     validate_entity,
 )
+from app.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ in the passage."""
 class EntityExtractor:
     def __init__(
         self,
-        llm,
+        llm: LLMProvider,
         allowed_types: set[str],
     ) -> None:
         self._llm = llm
