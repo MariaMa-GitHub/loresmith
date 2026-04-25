@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -219,7 +220,16 @@ class RAGPipeline:
         effective_question = await self._effective_question(question, history)
         revision = await self._resolve_corpus_revision(session)
 
-        cached = await self._lookup_cache(session, effective_question, revision, max_spoiler_tier)
+        # Compute the query embedding once; reused for both cache lookup and write.
+        identity = self._cache_identity()
+        if self._cache is not None and revision is not None and identity is not None:
+            q_embed: list[float] | None = (await self._embedder.embed([effective_question]))[0]
+        else:
+            q_embed = None
+
+        cached = await self._lookup_cache(
+            session, effective_question, revision, max_spoiler_tier, q_embed
+        )
         if cached is not None:
             return cached
 
@@ -270,14 +280,16 @@ class RAGPipeline:
                     verifier_verdict=verdict,
                 )
 
-        await self._store_in_cache(session, effective_question, revision, max_spoiler_tier, response)
+        await self._store_in_cache(
+            session, effective_question, revision, max_spoiler_tier, response, q_embed
+        )
         return response
 
     async def _resolve_corpus_revision(self, session) -> str | None:
         if self._cache is None or self._corpus_revision_fn is None:
             return None
         value = self._corpus_revision_fn(session, self._game_slug)
-        if hasattr(value, "__await__"):
+        if inspect.isawaitable(value):
             value = await value
         return value
 
@@ -288,13 +300,13 @@ class RAGPipeline:
         return backend, model
 
     async def _lookup_cache(
-        self, session, question: str, revision: str | None, max_spoiler_tier: int
+        self, session, question: str, revision: str | None, max_spoiler_tier: int,
+        query_embedding: list[float] | None,
     ) -> RAGResponse | None:
         identity = self._cache_identity()
-        if self._cache is None or revision is None or identity is None:
+        if self._cache is None or revision is None or identity is None or query_embedding is None:
             return None
         embedding_backend, embedding_model = identity
-        embeddings = await self._embedder.embed([question])
         hit = await self._cache.get(
             session=session,
             game_slug=self._game_slug,
@@ -302,7 +314,7 @@ class RAGPipeline:
             max_spoiler_tier=max_spoiler_tier,
             embedding_backend=embedding_backend,
             embedding_model=embedding_model,
-            query_embedding=embeddings[0],
+            query_embedding=query_embedding,
         )
         if hit is None:
             return None
@@ -319,12 +331,12 @@ class RAGPipeline:
         revision: str | None,
         max_spoiler_tier: int,
         response: RAGResponse,
+        query_embedding: list[float] | None,
     ) -> None:
         identity = self._cache_identity()
-        if self._cache is None or revision is None or identity is None:
+        if self._cache is None or revision is None or identity is None or query_embedding is None:
             return
         embedding_backend, embedding_model = identity
-        embeddings = await self._embedder.embed([question])
         await self._cache.put(
             session=session,
             game_slug=self._game_slug,
@@ -333,7 +345,7 @@ class RAGPipeline:
             embedding_backend=embedding_backend,
             embedding_model=embedding_model,
             query_text=question,
-            query_embedding=embeddings[0],
+            query_embedding=query_embedding,
             answer=response.answer,
             passages=response.passages,
             citations=response.citations,
@@ -349,7 +361,8 @@ class RAGPipeline:
             if text is not None:
                 return text
             if not tool_calls:
-                return ""
+                # Model returned neither text nor tool calls; fall back to plain completion.
+                return await self._llm.complete(messages)
             for call in tool_calls:
                 result = await self._tool_dispatcher.run(
                     session=session,

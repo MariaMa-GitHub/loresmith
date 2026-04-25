@@ -16,20 +16,21 @@ async def upsert_entities(
     if not entities:
         return 0
 
+    slugs = [e.slug for e in entities]
+    result = await session.execute(
+        select(Entity)
+        .where(Entity.game_slug == game_slug)
+        .where(Entity.slug.in_(slugs))
+    )
+    existing_by_slug = {row.slug: row for row in result.scalars().all()}
+
     touched = 0
     for entity in entities:
-        stmt = (
-            select(Entity)
-            .where(Entity.game_slug == game_slug)
-            .where(Entity.slug == entity.slug)
-        )
-        result = await session.execute(stmt)
-        existing = result.scalar_one_or_none()
+        existing = existing_by_slug.get(entity.slug)
         if existing is not None:
             existing.name = entity.name
             existing.description = entity.description
             existing.entity_type = entity.entity_type
-            touched += 1
         else:
             session.add(Entity(
                 game_slug=game_slug,
@@ -40,7 +41,7 @@ async def upsert_entities(
                 spoiler_tier=0,
                 metadata_={},
             ))
-            touched += 1
+        touched += 1
     await session.commit()
     return touched
 

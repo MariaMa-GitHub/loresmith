@@ -17,23 +17,17 @@ class CachedAnswer:
     similarity: float
 
 
+# Key format: "{count}:{max_id}:{iso_timestamp}". Any re-ingest that changes
+# passage_count, max_passage_id, or latest_updated_at flips this key,
+# making all old cache rows unreachable without a DELETE.
 def corpus_revision_key(revision: CorpusRevision) -> str:
-    """Stable identifier for a corpus state.
-
-    Any re-ingest that changes passage_count, max_passage_id, or
-    latest_updated_at flips this key, making old cache rows unreachable.
-    """
     updated = revision.latest_updated_at.isoformat() if revision.latest_updated_at else "none"
     return f"{revision.passage_count}:{revision.max_passage_id or 0}:{updated}"[:64]
 
 
+# Scope: (game_slug, corpus_revision, max_spoiler_tier, embedding_backend, embedding_model).
+# Lookup = nearest row within that exact scope by cosine distance; hit = similarity ≥ threshold.
 class SemanticCache:
-    """Embedding-similarity cache for generated answers.
-
-    Scope: (game_slug, corpus_revision, max_spoiler_tier, embedding_backend,
-    embedding_model). Lookup = nearest row within that exact scope by cosine
-    distance; hit = similarity ≥ similarity_threshold.
-    """
 
     def __init__(
         self,

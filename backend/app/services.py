@@ -7,21 +7,27 @@ in the web layer).
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
 from app.config import Settings, get_settings
-from app.llm.tools import ToolDispatcher
 from app.db.models import Passage
 from app.ingestion.pipeline import Embedder, make_embedder
 from app.llm.base import TaskType
 from app.llm.router import LLMRouter, build_llm_router
+from app.llm.tools import ToolDispatcher
+from app.rag.verifier import Verifier
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.dense import DenseRetriever
-from app.retrieval.reranker import CrossEncoderReranker, NullReranker
+from app.retrieval.reranker import CrossEncoderReranker, NullReranker, Reranker
 from app.tracing.langfuse import LangfuseTracer
+
+if TYPE_CHECKING:
+    from app.rag.semantic_cache import SemanticCache
 
 
 @dataclass
@@ -31,10 +37,10 @@ class Services:
     embedder: Embedder
     dense: DenseRetriever
     router: LLMRouter
-    reranker: object
-    semantic_cache: object = None
-    verifier: object = None
-    tool_dispatcher_factory: object = None
+    reranker: Reranker
+    semantic_cache: SemanticCache | None = None
+    verifier: Verifier | None = None
+    tool_dispatcher_factory: Callable[[str, set[str]], ToolDispatcher] | None = None
 
 
 @dataclass(frozen=True)
@@ -45,8 +51,10 @@ class CorpusRevision:
 
 
 def build_services() -> Services:
-    from app.rag.semantic_cache import SemanticCache, corpus_revision_key  # noqa: F401 — lazy to avoid circular
-    from app.rag.verifier import Verifier
+    from app.rag.semantic_cache import (  # noqa: F401 — lazy to avoid circular
+        SemanticCache,
+        corpus_revision_key,
+    )
 
     settings = get_settings()
     tracer = LangfuseTracer(

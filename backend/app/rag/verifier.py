@@ -9,10 +9,10 @@ from app.tracing.langfuse import noop_tracer
 _SYSTEM_PROMPT = """You are a strict retrieval-grounding judge.
 Return ONLY a JSON object with these keys — no markdown, no commentary:
 - is_faithful: true if every factual claim in the answer is supported by the passages.
-- has_sufficient_evidence: true if the passages contain enough information to answer the question.
-- unsupported_claims: list of short strings naming any claims not supported by the passages. [] if none.
-- rewrite_suggestions: list of up to 3 short rewording suggestions that might retrieve better passages. [] if not applicable.
-Grounded refusals ("I don't have enough evidence …") are considered faithful if they match the passages.
+- has_sufficient_evidence: true if the passages contain enough information to answer.
+- unsupported_claims: list of short strings naming claims not in the passages. [] if none.
+- rewrite_suggestions: up to 3 short rewording suggestions for better retrieval. [] if n/a.
+Grounded refusals ("I don't have enough evidence …") are faithful if they match the passages.
 """
 
 

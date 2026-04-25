@@ -11,8 +11,8 @@ from sqlalchemy import delete
 
 from app.db.models import SemanticCache as SemanticCacheRow
 from app.db.session import get_session_factory
-from app.eval.runner import load_dataset, run_eval
 from app.eval.judge import judge_answer
+from app.eval.runner import load_dataset, run_eval
 from app.games import ADAPTERS, GAME_DISPLAY
 from app.llm.base import TaskType
 from app.llm.tools import ToolDispatcher, build_default_tools

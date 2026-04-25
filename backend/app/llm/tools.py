@@ -63,8 +63,14 @@ def build_default_tools(
     lookup = entity_lookup_schema()
     listing = list_entities_by_type_schema(allowed_entity_types=allowed_entity_types)
     return [
-        ToolDefinition(name=lookup["name"], description=lookup["description"], parameters=lookup["parameters"]),
-        ToolDefinition(name=listing["name"], description=listing["description"], parameters=listing["parameters"]),
+        ToolDefinition(
+            name=lookup["name"], description=lookup["description"], parameters=lookup["parameters"]
+        ),
+        ToolDefinition(
+            name=listing["name"],
+            description=listing["description"],
+            parameters=listing["parameters"],
+        ),
     ]
 
 

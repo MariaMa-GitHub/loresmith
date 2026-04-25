@@ -1,7 +1,6 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import select
 
 from app.eval.ablations import (
     AblationConfig,

@@ -10,7 +10,10 @@ from app.entities.extractor import EntityExtractor
 async def test_extractor_parses_llm_json_and_applies_schema_filter():
     llm = AsyncMock()
     llm.complete.return_value = json.dumps([
-        {"slug": "Zagreus", "name": "Zagreus", "entity_type": "character", "description": "Prince."},
+        {
+            "slug": "Zagreus", "name": "Zagreus",
+            "entity_type": "character", "description": "Prince.",
+        },
         {"slug": "Unknown", "name": "?", "entity_type": "mystery", "description": ""},
     ])
 

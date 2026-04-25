@@ -62,11 +62,14 @@ async def test_chat_endpoint_streams_sse_tokens(client, monkeypatch):
             return RAGResponse(
                 answer="Hello world [1]",
                 passages=[
-                    {"passage_id": 1, "source_url": "https://x.com/1", "content": "Nyx\n\nctx1"},
-                    {"passage_id": 2, "source_url": "https://x.com/2", "content": "Persephone\n\nctx2"},
+                    {"passage_id": 1, "source_url": "https://x.com/1", "content": "Nyx ctx1"},
+                    {"passage_id": 2, "source_url": "https://x.com/2", "content": "Persephone"},
                 ],
                 citations=[
-                    {"index": 1, "passage_id": 2, "source_url": "https://x.com/2", "title": "Persephone"},
+                    {
+                        "index": 1, "passage_id": 2,
+                        "source_url": "https://x.com/2", "title": "Persephone",
+                    },
                 ],
             )
 
@@ -196,11 +199,14 @@ async def test_chat_endpoint_dedupes_same_source_url_citations(client, monkeypat
             return RAGResponse(
                 answer="Zagreus [1]",
                 passages=[
-                    {"passage_id": 1, "source_url": "https://x.com/zagreus", "content": "Zagreus\n\nctx1"},
-                    {"passage_id": 2, "source_url": "https://x.com/zagreus", "content": "Zagreus\n\nctx2"},
+                    {"passage_id": 1, "source_url": "https://x.com/zagreus", "content": "Zag ctx1"},
+                    {"passage_id": 2, "source_url": "https://x.com/zagreus", "content": "Zag ctx2"},
                 ],
                 citations=[
-                    {"index": 1, "passage_id": 1, "source_url": "https://x.com/zagreus", "title": "Zagreus"},
+                    {
+                        "index": 1, "passage_id": 1,
+                        "source_url": "https://x.com/zagreus", "title": "Zagreus",
+                    },
                 ],
             )
 
@@ -714,7 +720,8 @@ async def test_chat_stream_emits_refusal_event_when_pipeline_returns_refusal(cli
         if isinstance(item, ChatMessage) and item.role == "assistant"
     )
     assert assistant_message.response_meta["message_type"] == "refusal"
-    assert assistant_message.response_meta["refusal"]["rewrite_suggestions"] == ["Ask something else"]
+    expected_suggestions = ["Ask something else"]
+    assert assistant_message.response_meta["refusal"]["rewrite_suggestions"] == expected_suggestions
 
 
 @pytest.mark.asyncio

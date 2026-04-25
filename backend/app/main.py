@@ -23,6 +23,7 @@ from app.auth import (
 from app.config import Settings, get_settings
 from app.db.models import ChatMessage, ChatSession, QueryLog
 from app.db.session import get_session_factory
+from app.entities.extractor import EntityExtractor
 from app.games import ADAPTERS, GAME_DISPLAY, GAME_SLUGS, GAMES
 from app.ingestion.pipeline import make_embedder, run_ingestion
 from app.ingestion.scraper import Scraper
@@ -417,6 +418,9 @@ async def chat(
 
             yield f"data: {json.dumps({'type': 'session_id', 'content': session_id})}\n\n"
 
+            # /chat is buffered this week: pipeline.answer() runs the full LLM call
+            # (including verifier) before we emit any tokens. The verifier requires the
+            # complete answer text, so true LLM streaming is deferred to Week 6.
             answer_failed = False
             try:
                 response = await pipeline.answer(
@@ -431,14 +435,18 @@ async def chat(
                 yield f"data: {json.dumps({'type': 'error', 'content': 'stream_failed'})}\n\n"
 
             if not answer_failed:
+                response_meta: dict
                 if response.status == "answered":
                     for chunk in _chunk_text_for_sse(response.answer):
                         if chunk:
                             yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
                     yield f"data: {json.dumps({'type': 'answer', 'content': response.answer})}\n\n"
-                    yield f"data: {json.dumps({'type': 'citations', 'content': response.citations})}\n\n"
-                    response_meta: dict = {"message_type": "answer"}
-                else:
+                    citations_event = json.dumps(
+                        {"type": "citations", "content": response.citations}
+                    )
+                    yield f"data: {citations_event}\n\n"
+                    response_meta = {"message_type": "answer"}
+                elif response.status == "insufficient_evidence":
                     payload = {
                         "message": response.refusal.message,
                         "rewrite_suggestions": response.refusal.rewrite_suggestions,
@@ -446,6 +454,8 @@ async def chat(
                     }
                     yield f"data: {json.dumps({'type': 'refusal', 'content': payload})}\n\n"
                     response_meta = {"message_type": "refusal", "refusal": payload}
+                else:
+                    raise AssertionError(f"Unexpected response status: {response.status!r}")
 
                 session.add(ChatMessage(
                     session_id=session_id,
@@ -495,7 +505,6 @@ async def ingest(req: IngestRequest):
 
     entity_extractor = None
     if adapter.entity_schema:
-        from app.entities.extractor import EntityExtractor
         entity_extractor = EntityExtractor(
             llm=svc.router.for_task(TaskType.TAG),
             allowed_types={t.name for t in adapter.entity_schema},

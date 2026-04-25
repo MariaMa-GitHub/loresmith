@@ -406,8 +406,8 @@ async def test_answer_returns_refusal_when_verifier_rejects(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_answer_runs_tool_loop_and_returns_final_text(monkeypatch):
-    from app.rag.pipeline import RAGPipeline
     from app.llm.tools import ToolDefinition
+    from app.rag.pipeline import RAGPipeline
 
     class _LLM:
         model_name = "fake"
@@ -425,7 +425,8 @@ async def test_answer_runs_tool_loop_and_returns_final_text(monkeypatch):
             return {"name": "Zagreus", "entity_type": "character"}
 
     class _Embedder:
-        backend_name = "local"; model_name = "bge-base"
+        backend_name = "local"
+        model_name = "bge-base"
         async def embed(self, texts): return [[0.1] * 768]
 
     class _Dense:
@@ -451,8 +452,8 @@ async def test_answer_runs_tool_loop_and_returns_final_text(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_answer_raises_when_tools_enabled_but_provider_lacks_tool_support():
-    from app.rag.pipeline import RAGPipeline
     from app.llm.tools import ToolDefinition
+    from app.rag.pipeline import RAGPipeline
 
     class _LLM:
         model_name = "fake-plain"
@@ -464,7 +465,8 @@ async def test_answer_raises_when_tools_enabled_but_provider_lacks_tool_support(
             raise AssertionError("dispatcher must not run when provider lacks tool support")
 
     class _Embedder:
-        backend_name = "local"; model_name = "bge-base"
+        backend_name = "local"
+        model_name = "bge-base"
         async def embed(self, texts): return [[0.1] * 768]
 
     class _Dense:

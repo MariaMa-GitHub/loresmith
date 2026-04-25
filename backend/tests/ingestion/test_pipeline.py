@@ -6,11 +6,11 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.adapters.base import DEFAULT_SPOILER_PROFILE, RobotsPolicy, SourceConfig
+from app.entities.schema import ExtractedEntity
 from app.ingestion.chunker import Chunk, Chunker
 from app.ingestion.pipeline import IngestResult, run_ingestion
 from app.ingestion.scraper import ScrapedPage
 from app.ingestion.spoiler_tagger import SpoilerTagger
-from app.entities.schema import ExtractedEntity
 
 
 @dataclass
@@ -544,7 +544,7 @@ async def test_run_ingestion_upserts_entities_when_extractor_provided(monkeypatc
 
     adapter = _FakeAdapter(entity_schema=[])  # extractor is passed explicitly
 
-    result = await run_ingestion(
+    await run_ingestion(
         adapter=adapter,
         scraper=fake_scraper,
         chunker=Chunker(chunk_size=5, overlap=1),
