@@ -62,6 +62,7 @@ def default_matrix() -> list[AblationConfig]:
         AblationConfig("+cache", cache=True),
         AblationConfig("+tools", tools=True),
         AblationConfig("full", rewriter=True, rerank=True, verifier=True, cache=True, tools=True),
+        AblationConfig("full-no-tools", rewriter=True, rerank=True, verifier=True, cache=True),
         AblationConfig("hybrid-no-dense", retrieval="bm25_only"),
         AblationConfig("hybrid-no-bm25", retrieval="dense_only"),
     ]
@@ -196,43 +197,46 @@ async def run_matrix(
     results: list[AblationResult] = []
 
     try:
-        async with session_factory() as session:
-            for config in configs:
-                if config.tools and not provider_supports_tools(answer_provider):
-                    skipped_reason = "answer provider lacks complete_with_tools support"
-                    out_path = output_dir / f"{game_slug}-ablation-{config.config_id}.json"
-                    out_path.write_text(
-                        json.dumps(
-                            {
-                                "config_id": config.config_id,
-                                "game_slug": game_slug,
-                                "skipped_reason": skipped_reason,
-                            },
-                            indent=2,
-                        )
+        for config in configs:
+            if config.tools and not provider_supports_tools(answer_provider):
+                skipped_reason = "answer provider lacks complete_with_tools support"
+                out_path = output_dir / f"{game_slug}-ablation-{config.config_id}.json"
+                out_path.write_text(
+                    json.dumps(
+                        {
+                            "config_id": config.config_id,
+                            "game_slug": game_slug,
+                            "skipped_reason": skipped_reason,
+                        },
+                        indent=2,
                     )
-                    results.append(
-                        AblationResult(
-                            config_id=config.config_id,
-                            metrics={},
-                            output_path=out_path,
-                            skipped_reason=skipped_reason,
-                        )
-                    )
-                    continue
-
-                if config.cache:
-                    revision = await resolve_corpus_revision_key(session, game_slug)
-                    await _reset_cache_scope(
-                        session, game_slug=game_slug, corpus_revision=revision
-                    )
-
-                pipeline = await _build_pipeline(
-                    services=services, session=session, game_slug=game_slug, config=config
                 )
-                judge_llm = services.router.for_task(TaskType.VERIFY)
+                results.append(
+                    AblationResult(
+                        config_id=config.config_id,
+                        metrics={},
+                        output_path=out_path,
+                        skipped_reason=skipped_reason,
+                    )
+                )
+                continue
 
-                async def _answer(example, _pipeline=pipeline, _session=session):
+            # Short-lived session for setup; per-question sessions for eval calls so
+            # long Ollama latencies don't idle-timeout a shared connection.
+            async with session_factory() as setup_session:
+                if config.cache:
+                    revision = await resolve_corpus_revision_key(setup_session, game_slug)
+                    await _reset_cache_scope(
+                        setup_session, game_slug=game_slug, corpus_revision=revision
+                    )
+                pipeline = await _build_pipeline(
+                    services=services, session=setup_session, game_slug=game_slug, config=config
+                )
+
+            judge_llm = services.router.for_task(TaskType.VERIFY)
+
+            async def _answer(example, _pipeline=pipeline, _sf=session_factory):
+                async with _sf() as _session:
                     return await _pipeline.answer(
                         session=_session,
                         question=example.question,
@@ -240,33 +244,33 @@ async def run_matrix(
                         history=example.history,
                     )
 
-                async def _judge(example, response: RAGResponse, _llm=judge_llm):
-                    return await judge_answer(
-                        llm=_llm,
-                        question=example.question,
-                        expected_answer=example.expected_answer,
-                        actual_answer=response.answer,
-                        passages=response.passages,
-                        expects_refusal=example.expects_refusal,
-                    )
+            async def _judge(example, response: RAGResponse, _llm=judge_llm):
+                return await judge_answer(
+                    llm=_llm,
+                    question=example.question,
+                    expected_answer=example.expected_answer,
+                    actual_answer=response.answer,
+                    passages=response.passages,
+                    expects_refusal=example.expects_refusal,
+                )
 
-                report = await run_eval(
-                    game_slug=game_slug,
-                    dataset_path=dataset_path,
-                    examples=examples,
-                    answer_fn=_answer,
-                    run_name=f"{game_slug}-ablation-{config.config_id}",
-                    judge_fn=_judge,
+            report = await run_eval(
+                game_slug=game_slug,
+                dataset_path=dataset_path,
+                examples=examples,
+                answer_fn=_answer,
+                run_name=f"{game_slug}-ablation-{config.config_id}",
+                judge_fn=_judge,
+            )
+            out_path = output_dir / f"{game_slug}-ablation-{config.config_id}.json"
+            out_path.write_text(json.dumps(report, indent=2))
+            results.append(
+                AblationResult(
+                    config_id=config.config_id,
+                    metrics=report["metrics"],
+                    output_path=out_path,
                 )
-                out_path = output_dir / f"{game_slug}-ablation-{config.config_id}.json"
-                out_path.write_text(json.dumps(report, indent=2))
-                results.append(
-                    AblationResult(
-                        config_id=config.config_id,
-                        metrics=report["metrics"],
-                        output_path=out_path,
-                    )
-                )
+            )
     finally:
         services.tracer.flush()
     return results
