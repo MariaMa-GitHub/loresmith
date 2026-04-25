@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -139,7 +139,6 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     game: str
     question: str
-    spoiler_tier: int = Field(default=0, ge=0, le=3)
     session_id: str | None = None
 
     class HistoryMessage(BaseModel):
@@ -426,7 +425,7 @@ async def chat(
                 response = await pipeline.answer(
                     session=session,
                     question=req.question,
-                    max_spoiler_tier=req.spoiler_tier,
+                    max_spoiler_tier=3,
                     history=history,
                 )
             except Exception as exc:

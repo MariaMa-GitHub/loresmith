@@ -240,7 +240,7 @@ async def run_matrix(
                     return await _pipeline.answer(
                         session=_session,
                         question=example.question,
-                        max_spoiler_tier=example.spoiler_tier,
+                        max_spoiler_tier=3,
                         history=example.history,
                     )
 

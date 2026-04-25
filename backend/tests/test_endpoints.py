@@ -38,19 +38,6 @@ async def test_chat_endpoint_rejects_unknown_game(client):
     assert response.status_code == 404
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("spoiler_tier", [-1, 4])
-async def test_chat_endpoint_rejects_invalid_spoiler_tier(client, spoiler_tier):
-    response = await client.post(
-        "/chat",
-        json={
-            "game": "hades",
-            "question": "Who is Zagreus?",
-            "spoiler_tier": spoiler_tier,
-        },
-    )
-    assert response.status_code == 422
-
 
 @pytest.mark.asyncio
 async def test_chat_endpoint_streams_sse_tokens(client, monkeypatch):
