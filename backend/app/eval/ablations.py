@@ -177,6 +177,53 @@ async def _reset_cache_scope(session, *, game_slug: str, corpus_revision: str) -
     await session.commit()
 
 
+def _load_existing_results(
+    output_dir: Path, game_slug: str, configs: list[AblationConfig]
+) -> list[AblationResult]:
+    """Return AblationResult objects for configs that already have output JSON files."""
+    found = []
+    for config in configs:
+        out_path = output_dir / f"{game_slug}-ablation-{config.config_id}.json"
+        if out_path.exists():
+            try:
+                data = json.loads(out_path.read_text())
+                found.append(
+                    AblationResult(
+                        config_id=config.config_id,
+                        metrics=data.get("metrics", {}),
+                        output_path=out_path,
+                        skipped_reason=data.get("skipped_reason"),
+                    )
+                )
+            except Exception:
+                pass
+    return found
+
+
+def merge_report_rows(
+    output_dir: Path,
+    game_slug: str,
+    ordered_configs: list[AblationConfig],
+) -> list[dict]:
+    """Build an ordered list of report rows from all per-config JSON files in output_dir."""
+    rows = []
+    for config in ordered_configs:
+        out_path = output_dir / f"{game_slug}-ablation-{config.config_id}.json"
+        if out_path.exists():
+            try:
+                data = json.loads(out_path.read_text())
+                rows.append(
+                    {
+                        "config_id": config.config_id,
+                        "metrics": data.get("metrics", {}),
+                        "skipped_reason": data.get("skipped_reason"),
+                    }
+                )
+            except Exception:
+                pass
+    return rows
+
+
 async def run_matrix(
     *,
     game_slug: str,
@@ -184,8 +231,27 @@ async def run_matrix(
     output_dir: Path,
     configs: list[AblationConfig] | None = None,
     limit: int | None = None,
+    resume: bool = False,
 ) -> list[AblationResult]:
-    configs = configs or default_matrix()
+    all_configs = configs or default_matrix()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if resume:
+        existing_ids = {
+            r.config_id
+            for r in _load_existing_results(output_dir, game_slug, all_configs)
+        }
+        configs_to_run = [c for c in all_configs if c.config_id not in existing_ids]
+        skipped_existing = _load_existing_results(output_dir, game_slug, all_configs)
+        if existing_ids:
+            print(
+                f"[resume] Skipping already-complete configs: "
+                f"{sorted(existing_ids)}"
+            )
+    else:
+        configs_to_run = all_configs
+        skipped_existing = []
+
     services = build_services()
     session_factory = get_session_factory()
     examples = load_dataset(dataset_path)
@@ -193,11 +259,10 @@ async def run_matrix(
     if limit is not None:
         examples = examples[:limit]
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    results: list[AblationResult] = []
+    results: list[AblationResult] = list(skipped_existing)
 
     try:
-        for config in configs:
+        for config in configs_to_run:
             if config.tools and not provider_supports_tools(answer_provider):
                 skipped_reason = "answer provider lacks complete_with_tools support"
                 out_path = output_dir / f"{game_slug}-ablation-{config.config_id}.json"
@@ -282,6 +347,21 @@ def _main() -> None:
     parser.add_argument("--dataset", type=Path)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
+        "--configs",
+        nargs="+",
+        metavar="CONFIG_ID",
+        default=None,
+        help=(
+            "Run only these config IDs (e.g. --configs baseline +rewriter +rerank). "
+            "Defaults to the full 10-config matrix."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip configs that already have a completed output JSON in --out-dir.",
+    )
+    parser.add_argument(
         "--out-dir",
         type=Path,
         default=_REPO_ROOT / "eval_reports" / "ablations",
@@ -293,23 +373,34 @@ def _main() -> None:
     )
     args = parser.parse_args()
 
+    full_matrix = default_matrix()
+    if args.configs:
+        valid_ids = {c.config_id for c in full_matrix}
+        unknown = [c for c in args.configs if c not in valid_ids]
+        if unknown:
+            parser.error(
+                f"Unknown config IDs: {unknown}. "
+                f"Valid IDs: {sorted(valid_ids)}"
+            )
+        selected = [c for c in full_matrix if c.config_id in set(args.configs)]
+    else:
+        selected = None  # run_matrix will use full_matrix
+
     dataset = args.dataset or (_DATASETS_DIR / f"{args.game}.jsonl")
-    results = asyncio.run(
+    asyncio.run(
         run_matrix(
             game_slug=args.game,
             dataset_path=dataset,
             output_dir=args.out_dir,
+            configs=selected,
             limit=args.limit,
+            resume=args.resume,
         )
     )
-    rows = [
-        {
-            "config_id": r.config_id,
-            "metrics": r.metrics,
-            "skipped_reason": r.skipped_reason,
-        }
-        for r in results
-    ]
+
+    # Always render from all available per-config JSONs so partial runs accumulate.
+    out_dir = args.out_dir
+    rows = merge_report_rows(out_dir, args.game, full_matrix)
     md = render_markdown_report(game_slug=args.game, rows=rows)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(md)
