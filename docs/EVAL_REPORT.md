@@ -1,7 +1,7 @@
 # Eval report — hades (2026-04-25, Ollama run)
 
 **LLM backend:** Ollama — `qwen2.5:7b` (ANSWER), `qwen2.5:3b` (REWRITE / VERIFY / TAG)
-**Dataset:** `app/eval/datasets/hades.jsonl` — 20 examples (stratified sample)
+**Dataset:** `app/eval/datasets/hades.jsonl` — first 20 examples (`--limit 20`; not stratified)
 **Ship gates (full config, Gemini provider, full dataset):** faithfulness ≥ 0.85 · recall@5 ≥ 0.80 · citation validity ≥ 0.95
 
 > **Note on gate status:** Gates are not met on this run. This is expected — the gates are
