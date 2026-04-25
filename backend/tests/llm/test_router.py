@@ -53,6 +53,13 @@ def test_router_returns_fast_for_moderate():
     assert router.for_task(TaskType.MODERATE) is fast
 
 
+def test_router_returns_fast_for_extract():
+    strong = FakeProvider("gemini-2.5-flash")
+    fast = FakeProvider("gemini-2.5-flash-lite")
+    router = LLMRouter(strong=strong, fast=fast)
+    assert router.for_task(TaskType.EXTRACT) is fast
+
+
 @pytest.mark.asyncio
 async def test_router_for_task_result_is_callable():
     strong = FakeProvider("strong")

@@ -87,3 +87,60 @@ async def test_gemini_stream_yields_chunks():
             chunks.append(chunk)
 
     assert chunks == ["chunk1", " chunk2"]
+
+
+def test_to_gemini_contents_handles_model_tool_call():
+    from app.llm.gemini import _to_gemini_contents
+
+    messages = [
+        {
+            "role": "model_tool_call",
+            "calls": [{"name": "entity_lookup", "arguments": {"slug": "zag"}}],
+        }
+    ]
+    contents = _to_gemini_contents(messages)
+    assert len(contents) == 1
+    assert contents[0]["role"] == "model"
+    fc = contents[0]["parts"][0]["function_call"]
+    assert fc["name"] == "entity_lookup"
+    assert fc["args"] == {"slug": "zag"}
+
+
+def test_to_gemini_contents_handles_tool_results():
+    from app.llm.gemini import _to_gemini_contents
+
+    messages = [
+        {
+            "role": "tool_results",
+            "results": [{"name": "entity_lookup", "result": {"slug": "zag", "name": "Zagreus"}}],
+        }
+    ]
+    contents = _to_gemini_contents(messages)
+    assert len(contents) == 1
+    assert contents[0]["role"] == "user"
+    fr = contents[0]["parts"][0]["function_response"]
+    assert fr["name"] == "entity_lookup"
+    assert fr["response"] == {"slug": "zag", "name": "Zagreus"}
+
+
+def test_to_gemini_contents_full_tool_conversation():
+    from app.llm.gemini import _to_gemini_contents
+
+    messages = [
+        {"role": "user", "content": "Who is Zagreus?"},
+        {
+            "role": "model_tool_call",
+            "calls": [{"name": "entity_lookup", "arguments": {"slug": "zagreus"}}],
+        },
+        {
+            "role": "tool_results",
+            "results": [{"name": "entity_lookup", "result": {"name": "Zagreus"}}],
+        },
+    ]
+    contents = _to_gemini_contents(messages)
+    assert len(contents) == 3
+    assert contents[0]["role"] == "user"
+    assert contents[1]["role"] == "model"
+    assert contents[2]["role"] == "user"
+    assert "function_call" in contents[1]["parts"][0]
+    assert "function_response" in contents[2]["parts"][0]

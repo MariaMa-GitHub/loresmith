@@ -328,7 +328,7 @@ async def _main(args: argparse.Namespace) -> None:
     entity_extractor = None
     if adapter.entity_schema:
         entity_extractor = EntityExtractor(
-            llm=router.for_task(TaskType.TAG),
+            llm=router.for_task(TaskType.EXTRACT),
             allowed_types={t.name for t in adapter.entity_schema},
         )
 

@@ -7,13 +7,33 @@ from google.genai import types
 
 def _to_gemini_contents(messages: list[dict]) -> list:
     role_map = {"user": "user", "assistant": "model"}
-    return [
-        {
-            "role": role_map.get(m["role"], m["role"]),
-            "parts": [{"text": m["content"]}],
-        }
-        for m in messages
-    ]
+    out = []
+    for m in messages:
+        role = m["role"]
+        if role == "model_tool_call":
+            # Model turn: one function_call part per tool the model invoked.
+            out.append({
+                "role": "model",
+                "parts": [
+                    {"function_call": {"name": c["name"], "args": c["arguments"]}}
+                    for c in m["calls"]
+                ],
+            })
+        elif role == "tool_results":
+            # User turn: one function_response part per tool result.
+            out.append({
+                "role": "user",
+                "parts": [
+                    {"function_response": {"name": r["name"], "response": r["result"]}}
+                    for r in m["results"]
+                ],
+            })
+        else:
+            out.append({
+                "role": role_map.get(role, role),
+                "parts": [{"text": m["content"]}],
+            })
+    return out
 
 
 class GeminiProvider:

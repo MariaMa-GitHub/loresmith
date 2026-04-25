@@ -506,7 +506,7 @@ async def ingest(req: IngestRequest):
     entity_extractor = None
     if adapter.entity_schema:
         entity_extractor = EntityExtractor(
-            llm=svc.router.for_task(TaskType.TAG),
+            llm=svc.router.for_task(TaskType.EXTRACT),
             allowed_types={t.name for t in adapter.entity_schema},
         )
 

@@ -1,5 +1,4 @@
 import inspect
-import json
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -363,14 +362,17 @@ class RAGPipeline:
             if not tool_calls:
                 # Model returned neither text nor tool calls; fall back to plain completion.
                 return await self._llm.complete(messages)
+            # Preserve the model's function_call turn in conversation history so
+            # the next API call receives the correct function_call → function_response
+            # structure that Gemini requires.
+            messages.append({"role": "model_tool_call", "calls": tool_calls})
+            results = []
             for call in tool_calls:
                 result = await self._tool_dispatcher.run(
                     session=session,
                     call=ToolCall(name=call["name"], arguments=call.get("arguments", {})),
                 )
-                messages.append({
-                    "role": "user",
-                    "content": f"Tool {call['name']} result: {json.dumps(result)}",
-                })
+                results.append({"name": call["name"], "result": result})
+            messages.append({"role": "tool_results", "results": results})
         return await self._llm.complete(messages)
 

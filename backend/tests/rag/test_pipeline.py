@@ -484,3 +484,65 @@ async def test_answer_raises_when_tools_enabled_but_provider_lacks_tool_support(
     )
     with pytest.raises(RuntimeError, match="complete_with_tools support"):
         await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_uses_structured_function_call_messages(monkeypatch):
+    """After a tool call round, messages must use model_tool_call / tool_results
+    roles — not freeform user text — so Gemini gets the correct conversation structure."""
+    from app.llm.tools import ToolDefinition
+    from app.rag.pipeline import RAGPipeline
+
+    captured_second_messages: list[dict] = []
+
+    class _LLM:
+        model_name = "fake"
+        _call = 0
+
+        async def complete_with_tools(self, messages, tools):
+            self._call += 1
+            if self._call == 1:
+                return None, [{"name": "entity_lookup", "arguments": {"slug": "zag"}}]
+            captured_second_messages.extend(messages)
+            return "Answer [1].", []
+
+        async def complete(self, messages, system=None):
+            raise AssertionError("plain complete must not be called")
+
+    class _Dispatcher:
+        async def run(self, *, session, call):
+            return {"name": "Zagreus"}
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+        async def embed(self, texts): return [[0.1] * 768]
+
+    class _Dense:
+        async def search(self, **kw): return []
+
+    class _BM25:
+        def search(self, *a, **kw): return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(), bm25_index=_BM25(), dense_retriever=_Dense(),
+        llm=_LLM(), game_slug="hades", game_display_name="Hades",
+        tool_dispatcher=_Dispatcher(),
+        tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
+        tool_loop_max_iters=3,
+    )
+    async def _fake_retrieve(*a, **kw):
+        return [{"passage_id": 1, "content": "c", "source_url": "u"}]
+
+    monkeypatch.setattr(p, "_retrieve", _fake_retrieve)
+    await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)
+
+    roles = [m["role"] for m in captured_second_messages]
+    assert "model_tool_call" in roles, "model function_call turn missing from second call messages"
+    assert "tool_results" in roles, "tool_results turn missing from second call messages"
+    # Must NOT use freeform user-text tool results
+    user_msgs = [m for m in captured_second_messages if m["role"] == "user"]
+    for m in user_msgs:
+        assert "Tool " not in m.get("content", ""), (
+            "tool result must not be sent as freeform user text"
+        )
