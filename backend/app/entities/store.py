@@ -38,7 +38,7 @@ async def upsert_entities(
                 entity_type=entity.entity_type,
                 name=entity.name,
                 description=entity.description,
-                spoiler_tier=0,
+                spoiler_tier=3,
                 metadata_={},
             ))
         touched += 1

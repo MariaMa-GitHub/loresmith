@@ -67,7 +67,7 @@ class Entity(Base):
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    spoiler_tier: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    spoiler_tier: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -125,7 +125,7 @@ class SemanticCache(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     game_slug: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     corpus_revision: Mapped[str] = mapped_column(String(64), nullable=False)
-    max_spoiler_tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_spoiler_tier: Mapped[int] = mapped_column(Integer, nullable=False)  # always 3; kept as cache-key dimension
     embedding_backend: Mapped[str] = mapped_column(String(32), nullable=False)
     embedding_model: Mapped[str] = mapped_column(String(256), nullable=False)
     query_text: Mapped[str] = mapped_column(Text, nullable=False)

@@ -36,17 +36,9 @@ export function InsufficientEvidenceCard({
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Try asking
           </p>
-          <ul className="mt-1 space-y-1">
+          <ul className="mt-1 list-disc pl-5 space-y-1 text-xs">
             {rewriteSuggestions.map((suggestion, i) => (
-              <li key={i}>
-                <button
-                  type="button"
-                  title="Click-to-insert coming in a future update"
-                  className="w-full cursor-default rounded border border-border px-2 py-1 text-left text-xs opacity-70"
-                >
-                  {suggestion}
-                </button>
-              </li>
+              <li key={i}>{suggestion}</li>
             ))}
           </ul>
         </div>
