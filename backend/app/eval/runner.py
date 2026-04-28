@@ -79,7 +79,9 @@ async def run_eval(
 ) -> dict:
     results: list[dict] = []
 
-    for example in examples:
+    total = len(examples)
+    for idx, example in enumerate(examples, 1):
+        print(f"[{run_name}] {idx}/{total} {example.id}", flush=True)
         started = perf_counter()
         response = await answer_fn(example)
         normalized = normalize_answer_citations(

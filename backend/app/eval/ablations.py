@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import delete
+from sqlalchemy.exc import DBAPIError
 
 from app.db.models import SemanticCache as SemanticCacheRow
 from app.db.session import get_session_factory
@@ -301,13 +302,19 @@ async def run_matrix(
             judge_llm = services.router.for_task(TaskType.VERIFY)
 
             async def _answer(example, _pipeline=pipeline, _sf=session_factory):
-                async with _sf() as _session:
-                    return await _pipeline.answer(
-                        session=_session,
-                        question=example.question,
-                        max_spoiler_tier=3,
-                        history=example.history,
-                    )
+                for _attempt in range(3):
+                    try:
+                        async with _sf() as _session:
+                            return await _pipeline.answer(
+                                session=_session,
+                                question=example.question,
+                                max_spoiler_tier=3,
+                                history=example.history,
+                            )
+                    except DBAPIError:
+                        if _attempt == 2:
+                            raise
+                        await asyncio.sleep(2)
 
             async def _judge(example, response: RAGResponse, _llm=judge_llm):
                 return await judge_answer(
