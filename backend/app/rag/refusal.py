@@ -7,6 +7,7 @@ from app.rag.verifier import VerifierVerdict
 _DEFAULT_MESSAGE = (
     "I don't have enough evidence in the retrieved passages to answer that confidently."
 )
+_ABSTAINED_MESSAGE = "We could not verify this answer. Please try rephrasing your question."
 
 _HEURISTIC_TEMPLATES = (
     "Try asking about a specific character or entity by name.",
@@ -21,6 +22,7 @@ class RefusalPayload:
     unsupported_claims: list[str] = field(default_factory=list)
     rewrite_suggestions: list[str] = field(default_factory=list)
     question: str = ""
+    abstained: bool = False
 
 
 def build_refusal(
@@ -33,9 +35,12 @@ def build_refusal(
     if not suggestions:
         suggestions = list(_HEURISTIC_TEMPLATES[: 2 if passages else 3])
 
+    message = _ABSTAINED_MESSAGE if verdict.abstained else _DEFAULT_MESSAGE
+
     return RefusalPayload(
-        message=_DEFAULT_MESSAGE,
+        message=message,
         unsupported_claims=list(verdict.unsupported_claims),
         rewrite_suggestions=suggestions,
         question=question,
+        abstained=verdict.abstained,
     )

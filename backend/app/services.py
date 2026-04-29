@@ -76,8 +76,11 @@ def build_services() -> Services:
         if settings.semantic_cache_enabled
         else None
     )
+    verifier_task = (
+        TaskType.JUDGE if settings.verifier_model_tier == "strong" else TaskType.VERIFY
+    )
     verifier = (
-        Verifier(llm=router.for_task(TaskType.VERIFY), tracer=tracer)
+        Verifier(llm=router.for_task(verifier_task), tracer=tracer)
         if settings.verifier_enabled
         else None
     )

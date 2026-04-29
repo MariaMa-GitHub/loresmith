@@ -3,7 +3,7 @@ from app.llm.base import LLMProvider, TaskType
 from app.llm.gemini import GeminiProvider
 from app.llm.ollama import OllamaProvider
 
-_STRONG_TASKS = {TaskType.ANSWER}
+_STRONG_TASKS = {TaskType.ANSWER, TaskType.JUDGE}
 
 
 class LLMRouter:

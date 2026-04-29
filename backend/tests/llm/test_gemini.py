@@ -89,6 +89,35 @@ async def test_gemini_stream_yields_chunks():
     assert chunks == ["chunk1", " chunk2"]
 
 
+@pytest.mark.asyncio
+async def test_gemini_complete_json_validates_response():
+    from pydantic import BaseModel, ConfigDict
+
+    class _Schema(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        is_faithful: bool
+        has_sufficient_evidence: bool
+
+    mock_response = MagicMock()
+    mock_response.text = '{"is_faithful": true, "has_sufficient_evidence": false}'
+
+    with patch("app.llm.gemini.genai.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        provider = GeminiProvider(api_key="test")
+        result = await provider.complete_json(
+            [{"role": "user", "content": "judge this"}],
+            schema=_Schema,
+            system="be strict",
+        )
+
+    assert isinstance(result, _Schema)
+    assert result.is_faithful is True
+    assert result.has_sufficient_evidence is False
+
+
 def test_to_gemini_contents_handles_model_tool_call():
     from app.llm.gemini import _to_gemini_contents
 

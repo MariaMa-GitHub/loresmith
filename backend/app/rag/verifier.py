@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 
 from app.llm.base import LLMProvider
+from app.rag.structured_output import VerifierVerdictSchema
 from app.tracing.langfuse import noop_tracer
 
 _SYSTEM_PROMPT = """You are a strict retrieval-grounding judge.
@@ -23,6 +24,7 @@ class VerifierVerdict:
     unsupported_claims: list[str] = field(default_factory=list)
     rewrite_suggestions: list[str] = field(default_factory=list)
     raw: str | None = None
+    abstained: bool = False
 
 
 def _parse_json(text: str) -> dict | None:
@@ -53,8 +55,6 @@ class Verifier:
             return VerifierVerdict(
                 is_faithful=False,
                 has_sufficient_evidence=False,
-                unsupported_claims=[],
-                rewrite_suggestions=[],
             )
 
         passages_block = "\n\n".join(
@@ -66,24 +66,43 @@ class Verifier:
             f"Answer:\n{answer}\n\n"
             f"Retrieved passages:\n{passages_block}\n"
         )
+        messages = [{"role": "user", "content": prompt}]
 
         with self._tracer.trace("rag.verify") as span:
-            raw = await self._llm.complete(
-                messages=[{"role": "user", "content": prompt}],
-                system=_SYSTEM_PROMPT,
-            )
+            if hasattr(self._llm, "complete_json"):
+                try:
+                    result = await self._llm.complete_json(
+                        messages=messages,
+                        schema=VerifierVerdictSchema,
+                        system=_SYSTEM_PROMPT,
+                    )
+                except Exception:
+                    span.set_output("abstained")
+                    return VerifierVerdict(
+                        is_faithful=False,
+                        has_sufficient_evidence=False,
+                        abstained=True,
+                    )
+                span.set_output(result.model_dump_json())
+                return VerifierVerdict(
+                    is_faithful=result.is_faithful,
+                    has_sufficient_evidence=result.has_sufficient_evidence,
+                    unsupported_claims=list(result.unsupported_claims),
+                    rewrite_suggestions=list(result.rewrite_suggestions),
+                )
+
+            raw = await self._llm.complete(messages=messages, system=_SYSTEM_PROMPT)
             span.set_output(raw)
 
         payload = _parse_json(raw)
         if payload is None:
-            # Fail-open: don't convert every answer into a refusal when the
-            # judge itself returns garbage.
+            # Abstain — never silently coerce malformed judge output into
+            # is_faithful=True; the caller must treat this as low confidence.
             return VerifierVerdict(
-                is_faithful=True,
-                has_sufficient_evidence=True,
-                unsupported_claims=[],
-                rewrite_suggestions=[],
+                is_faithful=False,
+                has_sufficient_evidence=False,
                 raw=raw,
+                abstained=True,
             )
 
         return VerifierVerdict(

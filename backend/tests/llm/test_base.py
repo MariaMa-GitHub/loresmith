@@ -8,6 +8,7 @@ def test_task_type_values():
     assert TaskType.REWRITE == "rewrite"
     assert TaskType.TAG == "tag"
     assert TaskType.VERIFY == "verify"
+    assert TaskType.JUDGE == "judge"
     assert TaskType.MODERATE == "moderate"
 
 
@@ -26,6 +27,9 @@ class FakeProvider:
 
     async def stream(self, messages, system=None):
         yield "chunk"
+
+    async def complete_json(self, messages, schema, system=None):
+        return schema()
 
 
 def test_fake_provider_satisfies_protocol():

@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 
 from google import genai
 from google.genai import types
+from pydantic import BaseModel
 
 
 def _to_gemini_contents(messages: list[dict]) -> list:
@@ -69,6 +70,26 @@ class GeminiProvider:
             config=cfg,
         )
         return response.text
+
+    async def complete_json(
+        self,
+        messages: list[dict],
+        schema: type[BaseModel],
+        system: str | None = None,
+    ) -> BaseModel:
+        await self._pace()
+        contents = _to_gemini_contents(messages)
+        cfg = types.GenerateContentConfig(
+            system_instruction=system if system else None,
+            response_mime_type="application/json",
+            response_schema=schema,
+        )
+        response = await self._client.aio.models.generate_content(
+            model=self.model_name,
+            contents=contents,
+            config=cfg,
+        )
+        return schema.model_validate_json(response.text)
 
     async def complete_with_tools(
         self,

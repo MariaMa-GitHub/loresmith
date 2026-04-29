@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     # Verifier
     verifier_enabled: bool = True
+    verifier_model_tier: Literal["strong", "fast"] = "strong"
 
     # Tool use
     tools_enabled: bool = True

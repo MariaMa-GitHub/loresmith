@@ -69,6 +69,48 @@ async def test_ollama_complete_sends_correct_payload():
 
 
 @pytest.mark.asyncio
+async def test_ollama_complete_json_validates_and_passes_format():
+    from pydantic import BaseModel, ConfigDict
+
+    class _Schema(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        is_faithful: bool
+        has_sufficient_evidence: bool
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {
+        "message": {"content": '{"is_faithful": false, "has_sufficient_evidence": false}'}
+    }
+
+    with patch("app.llm.ollama.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        provider = OllamaProvider(model_name="llama3.1:8b")
+        result = await provider.complete_json(
+            [{"role": "user", "content": "judge"}],
+            schema=_Schema,
+            system="be strict",
+        )
+
+        call_kwargs = mock_client.post.call_args
+        payload = call_kwargs.kwargs["json"]
+        assert payload["model"] == "llama3.1:8b"
+        assert payload["stream"] is False
+        # Format must be the JSON Schema, not a string mode.
+        assert isinstance(payload["format"], dict)
+        assert payload["format"].get("title") == "_Schema"
+
+    assert isinstance(result, _Schema)
+    assert result.is_faithful is False
+    assert result.has_sufficient_evidence is False
+
+
+@pytest.mark.asyncio
 async def test_ollama_stream_yields_chunks():
     chunk1 = json.dumps({"message": {"content": "Hello"}, "done": False}).encode()
     chunk2 = json.dumps({"message": {"content": " world"}, "done": False}).encode()

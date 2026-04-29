@@ -178,6 +178,8 @@ async def run_eval(
             )
 
         judgment = await judge_fn(example, normalized_response) if judge_fn else None
+        verifier_verdict = response.verifier_verdict
+        verifier_abstained = verifier_verdict.abstained if verifier_verdict is not None else None
 
         results.append(
             {
@@ -216,6 +218,7 @@ async def run_eval(
                 "faithful": judgment.faithful if judgment else None,
                 "answer_correct": judgment.answer_correct if judgment else None,
                 "refusal_appropriate": judgment.refusal_appropriate if judgment else None,
+                "verifier_abstained": verifier_abstained,
                 "passages": normalized_response.passages,
                 "citations": normalized_response.citations,
             }
@@ -242,6 +245,9 @@ async def run_eval(
     ]
     refusal_values = [
         item["refusal_appropriate"] for item in results if item["refusal_appropriate"] is not None
+    ]
+    abstain_values = [
+        item["verifier_abstained"] for item in results if item.get("verifier_abstained") is not None
     ]
     citation_scores_list = [
         CitationScore(
@@ -287,6 +293,8 @@ async def run_eval(
         "answer_correctness_rate": _bool_rate(correctness_values),
         "refusal_examples": len(refusal_values),
         "refusal_appropriateness_rate": _bool_rate(refusal_values),
+        "verifier_evaluated_examples": len(abstain_values),
+        "verifier_abstain_rate": _bool_rate(abstain_values),
     }
     report = build_report(
         run_name=run_name,
