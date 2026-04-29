@@ -27,6 +27,7 @@ from app.eval.metrics import (
 )
 from app.eval.report import build_report, default_report_path, write_report
 from app.eval.source_identity import resolve_source_identities, resolve_source_identity
+from app.eval.stratum_metrics import aggregate_by_stratum
 from app.games import GAME_DISPLAY
 from app.llm.base import TaskType
 from app.rag.citations import normalize_answer_citations, parse_inline_citation_indices
@@ -287,13 +288,15 @@ async def run_eval(
         "refusal_examples": len(refusal_values),
         "refusal_appropriateness_rate": _bool_rate(refusal_values),
     }
-    return build_report(
+    report = build_report(
         run_name=run_name,
         game_slug=game_slug,
         dataset_path=dataset_path,
         metrics=metrics,
         results=results,
     )
+    report["metrics_by_stratum"] = aggregate_by_stratum(results)
+    return report
 
 
 async def run_pipeline_eval(

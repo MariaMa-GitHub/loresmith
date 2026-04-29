@@ -105,6 +105,29 @@ def render_markdown_report(*, game_slug: str, rows: list[dict]) -> str:
             f"| {fmt(m.get('answer_correctness_rate'))} "
             f"| {fmt(m.get('avg_latency_ms'))} |"
         )
+    lines.append("")
+    lines.append("## Per-stratum breakdown")
+    lines.append("")
+    lines.append(
+        "| config | stratum | n | faithfulness | recall@5 | cit_f1 | correctness | refusal_appr |"
+    )
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    for row in rows:
+        if row.get("skipped_reason"):
+            continue
+        m_by_s = row.get("metrics_by_stratum") or {}
+        for stratum in ("factual", "multi_hop", "ambiguous", "adversarial"):
+            sm = m_by_s.get(stratum)
+            if sm is None:
+                continue
+            lines.append(
+                f"| {row['config_id']} | {stratum} | {sm['dataset_size']} "
+                f"| {fmt(sm.get('faithfulness_rate'))} "
+                f"| {fmt(sm.get('retrieval_recall_at_5_mean'))} "
+                f"| {fmt(sm.get('citation_f1_mean'))} "
+                f"| {fmt(sm.get('answer_correctness_rate'))} "
+                f"| {fmt(sm.get('refusal_appropriateness_rate'))} |"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -223,6 +246,7 @@ def merge_report_rows(
                         "config_id": config.config_id,
                         "metrics": data.get("metrics", {}),
                         "skipped_reason": data.get("skipped_reason"),
+                        "metrics_by_stratum": data.get("metrics_by_stratum", {}),
                     }
                 )
             except Exception:
