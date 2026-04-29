@@ -125,7 +125,8 @@ class SemanticCache(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     game_slug: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     corpus_revision: Mapped[str] = mapped_column(String(64), nullable=False)
-    max_spoiler_tier: Mapped[int] = mapped_column(Integer, nullable=False)  # always 3; kept as cache-key dimension
+    # always 3; kept as cache-key dimension for future flexibility
+    max_spoiler_tier: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding_backend: Mapped[str] = mapped_column(String(32), nullable=False)
     embedding_model: Mapped[str] = mapped_column(String(256), nullable=False)
     query_text: Mapped[str] = mapped_column(Text, nullable=False)

@@ -8,7 +8,7 @@ A free-to-use, open-source RAG (Retrieval-Augmented Generation) platform for vid
 
 - **Hybrid retrieval** — BM25 + dense vector search (pgvector) fused via Reciprocal Rank Fusion
 - **Multi-turn chat** — follow-up questions are rewritten into standalone queries before retrieval
-- **Spoiler control** — passages are tagged tier 0–3 at ingestion; retrieval enforces a configurable max tier per request
+- **Spoiler control** — passages are tagged tier 0–3 at ingestion; currently hardcoded to endgame tier (all content visible)
 - **Streaming answers** — server-sent events with inline `[N]` citations linked to source passages
 - **Multi-game** — pluggable `GameAdapter` interface; currently supports Hades and Hades II
 - **Cross-encoder reranker** — BGE-based cross-encoder re-scores the top retrieval candidates before generation

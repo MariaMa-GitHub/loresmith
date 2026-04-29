@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +27,18 @@ from app.services import build_bm25, build_services, resolve_corpus_revision_key
 _VALID_RETRIEVAL = {"hybrid", "bm25_only", "dense_only"}
 _DATASETS_DIR = Path(__file__).parent / "datasets"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+logger = logging.getLogger(__name__)
+
+
+class _EmptyBM25:
+    def search(self, *a, **kw):
+        return []
+
+
+class _EmptyDense:
+    async def search(self, **kw):
+        return []
 
 
 @dataclass(frozen=True)
@@ -108,14 +121,6 @@ async def _build_pipeline(
 ) -> RAGPipeline:
     bm25, source_map = await build_bm25(session, game_slug)
 
-    class _EmptyBM25:
-        def search(self, *a, **kw):
-            return []
-
-    class _EmptyDense:
-        async def search(self, **kw):
-            return []
-
     bm25_index = bm25 if config.retrieval in {"hybrid", "bm25_only"} else _EmptyBM25()
     dense = services.dense if config.retrieval in {"hybrid", "dense_only"} else _EmptyDense()
 
@@ -197,7 +202,7 @@ def _load_existing_results(
                     )
                 )
             except Exception:
-                pass
+                logger.warning("Skipping corrupt ablation result file: %s", out_path)
     return found
 
 
@@ -221,7 +226,7 @@ def merge_report_rows(
                     }
                 )
             except Exception:
-                pass
+                logger.warning("Skipping corrupt ablation result file: %s", out_path)
     return rows
 
 
@@ -238,12 +243,9 @@ async def run_matrix(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if resume:
-        existing_ids = {
-            r.config_id
-            for r in _load_existing_results(output_dir, game_slug, all_configs)
-        }
-        configs_to_run = [c for c in all_configs if c.config_id not in existing_ids]
         skipped_existing = _load_existing_results(output_dir, game_slug, all_configs)
+        existing_ids = {r.config_id for r in skipped_existing}
+        configs_to_run = [c for c in all_configs if c.config_id not in existing_ids]
         if existing_ids:
             print(
                 f"[resume] Skipping already-complete configs: "

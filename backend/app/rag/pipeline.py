@@ -1,13 +1,11 @@
 import inspect
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from collections.abc import Callable
 
 from app.llm.tools import ToolCall, ToolDefinition, ToolDispatcher
 from app.rag.citations import normalize_answer_citations

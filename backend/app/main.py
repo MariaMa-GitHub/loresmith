@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 def _chunk_text_for_sse(text: str, chunk_size: int = 32) -> list[str]:
-    return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)] or [""]
+    return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
 
 
 @dataclass
@@ -446,7 +446,7 @@ async def chat(
                     )
                     yield f"data: {citations_event}\n\n"
                     response_meta = {"message_type": "answer"}
-                elif response.status == "insufficient_evidence":
+                elif response.status == "insufficient_evidence" and response.refusal is not None:
                     payload = {
                         "message": response.refusal.message,
                         "rewrite_suggestions": response.refusal.rewrite_suggestions,
