@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.adapters.base import DEFAULT_SPOILER_PROFILE, RobotsPolicy, SourceConfig
+from app.entities.schema import ExtractedEntity
 from app.ingestion.chunker import Chunk, Chunker
 from app.ingestion.pipeline import IngestResult, run_ingestion
 from app.ingestion.scraper import ScrapedPage
@@ -502,3 +503,53 @@ async def test_run_ingestion_reembeds_unchanged_chunks_when_embedding_identity_c
     fake_session.commit.assert_called_once()
     assert result.passages_upserted == 1
     assert result.passages_skipped == 0
+
+
+@pytest.mark.asyncio
+async def test_run_ingestion_upserts_entities_when_extractor_provided(monkeypatch):
+    upserts: list = []
+
+    async def fake_upsert(*, session, game_slug, entities):
+        upserts.extend(entities)
+        return len(entities)
+
+    monkeypatch.setattr(
+        "app.ingestion.pipeline.upsert_entities", fake_upsert,
+    )
+
+    class _Extractor:
+        async def extract(self, *, page_text, source_url, game_slug):
+            return [ExtractedEntity(slug="zag", name="Zagreus",
+                                    entity_type="character", description="")]
+
+    fake_page = ScrapedPage(
+        url="https://fake.example.com/wiki/Foo",
+        text="Foo is a character.",
+        title="Foo",
+        fetched_at=datetime.now(UTC),
+    )
+    fake_scraper = MagicMock()
+    fake_scraper.fetch = AsyncMock(return_value=fake_page)
+
+    fake_embedder = MagicMock()
+    fake_embedder.embed = AsyncMock(side_effect=lambda texts: [[0.0] * 768 for _ in texts])
+    fake_embedder.backend_name = "local"
+    fake_embedder.model_name = "bge-base"
+
+    select_result = MagicMock()
+    select_result.all.return_value = []
+    fake_session = AsyncMock()
+    fake_session.execute = AsyncMock(return_value=select_result)
+    fake_session.commit = AsyncMock()
+
+    adapter = _FakeAdapter(entity_schema=[])  # extractor is passed explicitly
+
+    await run_ingestion(
+        adapter=adapter,
+        scraper=fake_scraper,
+        chunker=Chunker(chunk_size=5, overlap=1),
+        embedder=fake_embedder,
+        session=fake_session,
+        entity_extractor=_Extractor(),
+    )
+    assert len(upserts) >= 1

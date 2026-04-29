@@ -25,7 +25,7 @@ from app.llm.base import TaskType
 from app.rag.citations import normalize_answer_citations, parse_inline_citation_indices
 from app.rag.pipeline import RAGPipeline, RAGResponse
 from app.rag.rewriter import QueryRewriter
-from app.services import build_bm25, build_services
+from app.services import build_bm25, build_services, resolve_corpus_revision_key
 
 _DATASETS_DIR = Path(__file__).parent / "datasets"
 _DEFAULT_DATASETS = {
@@ -79,7 +79,9 @@ async def run_eval(
 ) -> dict:
     results: list[dict] = []
 
-    for example in examples:
+    total = len(examples)
+    for idx, example in enumerate(examples, 1):
+        print(f"[{run_name}] {idx}/{total} {example.id}", flush=True)
         started = perf_counter()
         response = await answer_fn(example)
         normalized = normalize_answer_citations(
@@ -304,7 +306,11 @@ async def run_pipeline_eval(
                     llm=services.router.for_task(TaskType.REWRITE),
                     tracer=services.tracer,
                 ),
+                reranker=services.reranker,
+                semantic_cache=services.semantic_cache,
+                corpus_revision_fn=resolve_corpus_revision_key,
                 retrieve_top_k=services.settings.retrieval_top_k_per_method,
+                rerank_candidates=services.settings.rerank_candidates,
                 final_top_k=services.settings.retrieval_top_k_final,
             )
             judge_llm = services.router.for_task(TaskType.VERIFY)
@@ -313,7 +319,7 @@ async def run_pipeline_eval(
                 return await pipeline.answer(
                     session=session,
                     question=example.question,
-                    max_spoiler_tier=example.spoiler_tier,
+                    max_spoiler_tier=3,
                     history=example.history,
                 )
 

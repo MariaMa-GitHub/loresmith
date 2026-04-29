@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -23,11 +23,13 @@ from app.auth import (
 from app.config import Settings, get_settings
 from app.db.models import ChatMessage, ChatSession, QueryLog
 from app.db.session import get_session_factory
+from app.entities.extractor import EntityExtractor
 from app.games import ADAPTERS, GAME_DISPLAY, GAME_SLUGS, GAMES
 from app.ingestion.pipeline import make_embedder, run_ingestion
 from app.ingestion.scraper import Scraper
 from app.ingestion.spoiler_tagger import SpoilerTagger
 from app.llm.base import TaskType
+from app.llm.tools import build_default_tools
 from app.rag.citations import normalize_answer_citations
 from app.rag.pipeline import RAGPipeline
 from app.rag.rewriter import QueryRewriter
@@ -37,9 +39,14 @@ from app.services import (
     build_bm25,
     build_services,
     get_corpus_revision,
+    resolve_corpus_revision_key,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _chunk_text_for_sse(text: str, chunk_size: int = 32) -> list[str]:
+    return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
 
 
 @dataclass
@@ -67,6 +74,16 @@ async def _get_pipeline(session, game_slug: str) -> RAGPipeline:
 
         svc: Services = app.state.services
         bm25, source_map = await build_bm25(session, game_slug)
+        entity_schema = ADAPTERS[game_slug].entity_schema
+        allowed_entity_types = {t.name for t in entity_schema}
+        dispatcher = (
+            svc.tool_dispatcher_factory(game_slug, allowed_entity_types)
+            if svc.tool_dispatcher_factory is not None and allowed_entity_types else None
+        )
+        tool_defs = (
+            build_default_tools(game_slug=game_slug, entity_schema=entity_schema)
+            if dispatcher else None
+        )
         cache[game_slug] = _PipelineCacheEntry(
             revision=revision,
             pipeline=RAGPipeline(
@@ -82,8 +99,16 @@ async def _get_pipeline(session, game_slug: str) -> RAGPipeline:
                     llm=svc.router.for_task(TaskType.REWRITE),
                     tracer=svc.tracer,
                 ),
+                reranker=svc.reranker,
                 retrieve_top_k=svc.settings.retrieval_top_k_per_method,
+                rerank_candidates=svc.settings.rerank_candidates,
                 final_top_k=svc.settings.retrieval_top_k_final,
+                semantic_cache=svc.semantic_cache,
+                corpus_revision_fn=resolve_corpus_revision_key,
+                verifier=svc.verifier,
+                tool_dispatcher=dispatcher,
+                tool_definitions=tool_defs,
+                tool_loop_max_iters=svc.settings.tool_loop_max_iters,
             ),
         )
     return cache[game_slug].pipeline
@@ -114,7 +139,6 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     game: str
     question: str
-    spoiler_tier: int = Field(default=0, ge=0, le=3)
     session_id: str | None = None
 
     class HistoryMessage(BaseModel):
@@ -303,6 +327,7 @@ async def get_session_messages(
                 ChatMessage.role,
                 ChatMessage.content,
                 ChatMessage.citations,
+                ChatMessage.response_meta,
                 ChatMessage.created_at,
             )
             .where(ChatMessage.session_id == session_id)
@@ -317,11 +342,14 @@ async def get_session_messages(
                 )
             else:
                 normalized = normalize_answer_citations(row.content)
+            meta = row.response_meta or {}
+            refusal = meta.get("refusal") if isinstance(meta, dict) else None
             messages.append(
                 {
                     "role": row.role,
                     "content": normalized.answer,
                     "citations": normalized.citations,
+                    "refusal": refusal if isinstance(refusal, dict) else None,
                     "created_at": row.created_at.isoformat()
                     if row.created_at
                     else None,
@@ -354,7 +382,6 @@ async def chat(
     async def event_stream() -> AsyncIterator[str]:
         session_id = req.session_id or str(uuid.uuid4())
         session_factory = get_session_factory()
-        collected: list[str] = []
 
         async with session_factory() as session:
             history = [
@@ -365,17 +392,9 @@ async def chat(
                 history = await _load_rewrite_history(session, req.session_id)
 
             pipeline = await _get_pipeline(session, req.game)
-            messages, passages = await pipeline.prepare_messages(
-                session=session,
-                question=req.question,
-                max_spoiler_tier=req.spoiler_tier,
-                history=history,
-            )
 
-            # Persist the user turn + query log up-front so mid-stream
-            # failures don't drop the record of the question having been
-            # asked. The assistant row is written after the stream
-            # completes so it carries the final content.
+            # Persist the user turn + query log up-front so answer failures
+            # don't drop the record of the question having been asked.
             upsert_stmt = pg_insert(ChatSession).values(
                 id=session_id,
                 owner_token=owner_token,
@@ -396,44 +415,61 @@ async def chat(
             ))
             await session.commit()
 
-            stream_failed = False
-            try:
-                async for chunk in pipeline.stream_messages(messages):
-                    collected.append(chunk)
-                    yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
-            except Exception as exc:
-                stream_failed = True
-                logger.exception("Chat stream failed for session %s: %s", session_id, exc)
-                yield (
-                    f"data: {json.dumps({'type': 'error', 'content': 'stream_failed'})}\n\n"
-                )
+            yield f"data: {json.dumps({'type': 'session_id', 'content': session_id})}\n\n"
 
-            if not stream_failed:
-                assistant_text = "".join(collected)
-                normalized = normalize_answer_citations(
-                    assistant_text,
-                    passages=passages,
+            # /chat is buffered this week: pipeline.answer() runs the full LLM call
+            # (including verifier) before we emit any tokens. The verifier requires the
+            # complete answer text, so true LLM streaming is deferred to Week 6.
+            answer_failed = False
+            response = None
+            try:
+                response = await pipeline.answer(
+                    session=session,
+                    question=req.question,
+                    max_spoiler_tier=3,
+                    history=history,
                 )
-                yield f"data: {json.dumps({'type': 'answer', 'content': normalized.answer})}\n\n"
-                citations_event = {
-                    "type": "citations",
-                    "content": normalized.citations,
-                }
-                yield f"data: {json.dumps(citations_event)}\n\n"
+            except Exception as exc:
+                answer_failed = True
+                logger.exception("Chat answer failed for session %s: %s", session_id, exc)
+                yield f"data: {json.dumps({'type': 'error', 'content': 'stream_failed'})}\n\n"
+
+            if not answer_failed:
+                response_meta: dict
+                if response.status == "answered":
+                    for chunk in _chunk_text_for_sse(response.answer):
+                        if chunk:
+                            yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+                    yield f"data: {json.dumps({'type': 'answer', 'content': response.answer})}\n\n"
+                    citations_event = json.dumps(
+                        {"type": "citations", "content": response.citations}
+                    )
+                    yield f"data: {citations_event}\n\n"
+                    response_meta = {"message_type": "answer"}
+                elif response.status == "insufficient_evidence" and response.refusal is not None:
+                    payload = {
+                        "message": response.refusal.message,
+                        "rewrite_suggestions": response.refusal.rewrite_suggestions,
+                        "unsupported_claims": response.refusal.unsupported_claims,
+                    }
+                    yield f"data: {json.dumps({'type': 'refusal', 'content': payload})}\n\n"
+                    response_meta = {"message_type": "refusal", "refusal": payload}
+                else:
+                    raise AssertionError(f"Unexpected response status: {response.status!r}")
 
                 session.add(ChatMessage(
                     session_id=session_id,
                     role="assistant",
-                    content=normalized.answer,
-                    citations=normalized.citations,
+                    content=response.answer,
+                    citations=response.citations,
+                    response_meta=response_meta,
                 ))
                 await session.commit()
 
-            yield f"data: {json.dumps({'type': 'session_id', 'content': session_id})}\n\n"
-            if stream_failed:
+            if answer_failed:
                 yield f"data: {json.dumps({'type': 'done', 'status': 'error'})}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'status': 'ok'})}\n\n"
 
     response = StreamingResponse(event_stream(), media_type="text/event-stream")
     if issued_owner_token and owner_token is not None:
@@ -467,6 +503,13 @@ async def ingest(req: IngestRequest):
     embedder = make_embedder(svc.settings)
     tagger = SpoilerTagger(llm=svc.router.for_task(TaskType.TAG), tracer=svc.tracer)
 
+    entity_extractor = None
+    if adapter.entity_schema:
+        entity_extractor = EntityExtractor(
+            llm=svc.router.for_task(TaskType.EXTRACT),
+            allowed_types={t.name for t in adapter.entity_schema},
+        )
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         result = await run_ingestion(
@@ -477,6 +520,7 @@ async def ingest(req: IngestRequest):
             session=session,
             dry_run=req.dry_run,
             spoiler_tagger=tagger,
+            entity_extractor=entity_extractor,
         )
 
     # Invalidate the pipeline cache so the next /chat rebuilds against the

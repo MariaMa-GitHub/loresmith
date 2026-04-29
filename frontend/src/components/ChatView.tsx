@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect } from "react";
 import { streamChat, type ChatMessage, type Citation } from "@/lib/api";
 import { MessageBubble } from "./MessageBubble";
-import { SpoilerSlider } from "./SpoilerSlider";
 
 interface ChatViewProps {
   gameSlug: string;
@@ -25,7 +24,6 @@ export function ChatView({
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [spoilerTier, setSpoilerTier] = useState(3);
   const bottomRef = useRef<HTMLDivElement>(null);
   const activeRequestIdRef = useRef(0);
   const activeAbortControllerRef = useRef<AbortController | null>(null);
@@ -104,7 +102,6 @@ export function ChatView({
       for await (const event of streamChat({
         game: gameSlug,
         question,
-        spoilerTier,
         sessionId,
         history,
         signal: abortController.signal,
@@ -170,6 +167,32 @@ export function ChatView({
           });
         }
 
+        if (event.type === "refusal") {
+          if (streamFailed) {
+            continue;
+          }
+          const payload = event.content as {
+            message: string;
+            rewrite_suggestions: string[];
+            unsupported_claims: string[];
+          };
+          setMessages((prev) => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (!last || last.role !== "assistant") {
+              return prev;
+            }
+            updated[updated.length - 1] = {
+              ...last,
+              content: payload.message,
+              refusal: payload,
+              citations: [],
+            };
+            return updated;
+          });
+          continue;
+        }
+
         if (event.type === "error") {
           streamFailed = true;
           markStreamInterrupted();
@@ -200,9 +223,6 @@ export function ChatView({
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] max-w-2xl mx-auto p-4">
-      <div className="mb-4">
-        <SpoilerSlider onChange={setSpoilerTier} value={spoilerTier} />
-      </div>
       <div className="flex-1 overflow-y-auto">
         {messages.length === 0 && (
           <p className="text-center text-muted-foreground mt-16 text-sm">
@@ -215,6 +235,7 @@ export function ChatView({
             role={msg.role}
             content={msg.content}
             citations={msg.citations}
+            refusal={msg.refusal}
           />
         ))}
         <div ref={bottomRef} />

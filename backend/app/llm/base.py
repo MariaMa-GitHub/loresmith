@@ -9,6 +9,7 @@ class TaskType(StrEnum):
     TAG = "tag"            # fast/cheap model
     VERIFY = "verify"      # fast/cheap model
     MODERATE = "moderate"  # fast/cheap model
+    EXTRACT = "extract"    # fast/cheap model — structured entity extraction
 
 
 @runtime_checkable

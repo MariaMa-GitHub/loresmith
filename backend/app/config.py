@@ -14,12 +14,32 @@ class Settings(BaseSettings):
     # LLM
     gemini_api_key: str = ""
     llm_backend: str = "gemini"  # gemini | ollama | auto
+    gemini_strong_model: str = "gemini-2.5-flash"
+    gemini_fast_model: str = "gemini-2.5-flash-lite"
+    gemini_min_call_interval: float = 0.0  # seconds between API calls; >0 to stay under RPM limits
 
     # Embeddings
     embedding_backend: str = "local"  # local | gemini
     local_embedding_model: str = "BAAI/bge-base-en-v1.5"  # 768d, matches EMBEDDING_DIM
     retrieval_top_k_per_method: int = Field(default=10, ge=1)
     retrieval_top_k_final: int = Field(default=5, ge=1)
+
+    # Reranker
+    reranker_enabled: bool = True
+    reranker_model: str = "BAAI/bge-reranker-base"
+    rerank_candidates: int = Field(default=20, ge=1)
+
+    # Semantic cache
+    semantic_cache_enabled: bool = True
+    semantic_cache_threshold: float = Field(default=0.92, ge=0.0, le=1.0)
+    semantic_cache_lookup_limit: int = Field(default=3, ge=1)
+
+    # Verifier
+    verifier_enabled: bool = True
+
+    # Tool use
+    tools_enabled: bool = True
+    tool_loop_max_iters: int = Field(default=3, ge=1, le=8)
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"

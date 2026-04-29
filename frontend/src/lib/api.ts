@@ -16,6 +16,11 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+  refusal?: {
+    message: string;
+    rewrite_suggestions: string[];
+    unsupported_claims: string[];
+  };
 }
 
 interface ChatHistoryMessage {
@@ -72,6 +77,7 @@ export async function fetchSessionMessages(
       role: msg.role,
       content: msg.content,
       citations: msg.citations,
+      refusal: msg.refusal,
     })),
   };
 }
@@ -79,7 +85,6 @@ export async function fetchSessionMessages(
 interface StreamChatOptions {
   game: string;
   question: string;
-  spoilerTier?: number;
   sessionId?: string | null;
   history?: ChatMessage[];
   signal?: AbortSignal;
@@ -88,7 +93,6 @@ interface StreamChatOptions {
 export async function* streamChat({
   game,
   question,
-  spoilerTier = 3,
   sessionId,
   history = [],
   signal,
@@ -101,7 +105,6 @@ export async function* streamChat({
     body: JSON.stringify({
       game,
       question,
-      spoiler_tier: spoilerTier,
       session_id: sessionId ?? undefined,
       history: history.map<ChatHistoryMessage>(({ role, content }) => ({
         role,
