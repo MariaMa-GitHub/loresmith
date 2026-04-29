@@ -7,14 +7,18 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.llm.tools import ToolCall
+from collections.abc import Callable
+
+from app.llm.tools import ToolCall, ToolDefinition, ToolDispatcher
 from app.rag.citations import normalize_answer_citations
 from app.rag.refusal import RefusalPayload, build_refusal
 from app.rag.rewriter import QueryRewriter
-from app.rag.verifier import VerifierVerdict
+from app.rag.semantic_cache import SemanticCache
+from app.rag.verifier import Verifier, VerifierVerdict
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.dense import DenseRetriever
 from app.retrieval.hybrid import rrf_fuse
+from app.retrieval.reranker import Reranker
 from app.tracing.langfuse import noop_tracer
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -58,15 +62,15 @@ class RAGPipeline:
         tracer=None,
         bm25_source_map: dict[int, str] | None = None,
         rewriter: QueryRewriter | None = None,
-        reranker=None,  # must satisfy Reranker protocol; None = no-op
+        reranker: Reranker | None = None,
         retrieve_top_k: int = 10,
         rerank_candidates: int = 20,
         final_top_k: int = 5,
-        semantic_cache=None,               # SemanticCache | None
-        corpus_revision_fn=None,           # (session, game_slug) -> awaitable[str] | str
-        verifier=None,                     # Verifier | None
-        tool_dispatcher=None,              # ToolDispatcher | None
-        tool_definitions=None,             # list[ToolDefinition] | None
+        semantic_cache: SemanticCache | None = None,
+        corpus_revision_fn: Callable | None = None,
+        verifier: Verifier | None = None,
+        tool_dispatcher: ToolDispatcher | None = None,
+        tool_definitions: list[ToolDefinition] | None = None,
         tool_loop_max_iters: int = 3,
     ) -> None:
         self._embedder = embedder

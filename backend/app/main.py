@@ -421,6 +421,7 @@ async def chat(
             # (including verifier) before we emit any tokens. The verifier requires the
             # complete answer text, so true LLM streaming is deferred to Week 6.
             answer_failed = False
+            response = None
             try:
                 response = await pipeline.answer(
                     session=session,
