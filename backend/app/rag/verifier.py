@@ -106,8 +106,8 @@ class Verifier:
             )
 
         return VerifierVerdict(
-            is_faithful=bool(payload.get("is_faithful", True)),
-            has_sufficient_evidence=bool(payload.get("has_sufficient_evidence", True)),
+            is_faithful=bool(payload.get("is_faithful", False)),
+            has_sufficient_evidence=bool(payload.get("has_sufficient_evidence", False)),
             unsupported_claims=list(payload.get("unsupported_claims") or []),
             rewrite_suggestions=list(payload.get("rewrite_suggestions") or []),
             raw=raw,
