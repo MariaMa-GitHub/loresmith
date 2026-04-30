@@ -11,8 +11,9 @@ def _make_pipeline(*, bm25_hits, dense_hits, llm_stream, rewriter=None):
     """Builder that keeps every test's setup explicit and short."""
     mock_embedder = MagicMock()
     mock_embedder.backend_name = "local"
-    mock_embedder.model_name = "BAAI/bge-base-en-v1.5"
+    mock_embedder.model_name = "BAAI/bge-base-en-v1.5:asym"
     mock_embedder.embed = AsyncMock(return_value=[[0.1] * 768])
+    mock_embedder.embed_queries = AsyncMock(return_value=[[0.1] * 768])
 
     mock_bm25 = MagicMock()
     mock_bm25.search.return_value = bm25_hits
@@ -705,3 +706,82 @@ async def test_relevance_gate_short_circuits_before_llm():
     assert response.status == "insufficient_evidence"
     assert response.answer  # refusal message is non-empty
     assert response.refusal is not None
+
+
+@pytest.mark.asyncio
+async def test_retrieve_uses_embed_queries_when_available():
+    """_retrieve_with_scores calls embed_queries on the embedder when present."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.rag.pipeline import RAGPipeline
+
+    embed_queries_mock = AsyncMock(return_value=[[0.5] * 768])
+    embed_mock = AsyncMock(return_value=[[0.1] * 768])
+
+    mock_embedder = MagicMock()
+    mock_embedder.backend_name = "local"
+    mock_embedder.model_name = "BAAI/bge-base-en-v1.5:asym"
+    mock_embedder.embed = embed_mock
+    mock_embedder.embed_queries = embed_queries_mock
+
+    p = RAGPipeline(
+        embedder=mock_embedder,
+        bm25_index=MagicMock(search=MagicMock(return_value=[])),
+        dense_retriever=MagicMock(search=AsyncMock(return_value=[])),
+        llm=MagicMock(),
+        game_slug="hades",
+        game_display_name="Hades",
+    )
+
+    await p._retrieve_with_scores(
+        session=AsyncMock(), question="who is zagreus?", max_spoiler_tier=0
+    )
+
+    embed_queries_mock.assert_awaited_once_with(["who is zagreus?"])
+    embed_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_answer_uses_embed_queries_for_cache_embedding():
+    """answer() must call embed_queries (not embed) when computing the cache query embedding."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.rag.pipeline import RAGPipeline
+    from app.rag.semantic_cache import CachedAnswer
+
+    embed_queries_mock = AsyncMock(return_value=[[0.5] * 768])
+    embed_mock = AsyncMock(return_value=[[0.1] * 768])
+
+    mock_embedder = MagicMock()
+    mock_embedder.backend_name = "local"
+    mock_embedder.model_name = "BAAI/bge-base-en-v1.5:asym"
+    mock_embedder.embed = embed_mock
+    mock_embedder.embed_queries = embed_queries_mock
+
+    class _Cache:
+        async def get(self, **kw):
+            return CachedAnswer(
+                answer="cached",
+                passages=[],
+                citations=[],
+                similarity=0.99,
+            )
+
+        async def put(self, **kw):
+            pass
+
+    p = RAGPipeline(
+        embedder=mock_embedder,
+        bm25_index=MagicMock(search=MagicMock(return_value=[])),
+        dense_retriever=MagicMock(search=AsyncMock(return_value=[])),
+        llm=MagicMock(),
+        game_slug="hades",
+        game_display_name="Hades",
+        semantic_cache=_Cache(),
+        corpus_revision_fn=lambda session, slug: "rev1",
+    )
+
+    await p.answer(session=AsyncMock(), question="who is nyx?", max_spoiler_tier=0)
+
+    embed_queries_mock.assert_awaited_once_with(["who is nyx?"])
+    embed_mock.assert_not_awaited()

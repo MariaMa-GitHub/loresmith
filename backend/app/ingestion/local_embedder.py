@@ -4,6 +4,7 @@ Produces 768-dim unit-norm vectors on CPU with zero external API dependencies.
 The underlying `SentenceTransformer.encode` call is blocking, so we run it via
 `asyncio.to_thread` to avoid starving the event loop during ingestion.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODEL = "BAAI/bge-base-en-v1.5"
 _DEFAULT_BATCH_SIZE = 32  # Balanced for CPU throughput and memory.
 _EXPECTED_DIM = 768  # Must match EMBEDDING_DIM in app/db/models.py.
+_BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 
 class LocalEmbedder:
@@ -29,6 +31,10 @@ class LocalEmbedder:
 
     `normalize_embeddings=True` returns unit-norm vectors so cosine similarity
     can be computed as a plain dot product in pgvector.
+
+    `model_name` carries an `:asym` suffix as the DB identity string to signal
+    asymmetric encoding; the actual HuggingFace model ID is stored in
+    `_hf_model_name`.
     """
 
     backend_name = "local"
@@ -41,7 +47,8 @@ class LocalEmbedder:
         batch_size: int = _DEFAULT_BATCH_SIZE,
         device: str | None = None,
     ) -> None:
-        self.model_name = model_name
+        self._hf_model_name = model_name
+        self.model_name = model_name + ":asym"
         self._batch_size = batch_size
         self._device = device  # None → let sentence-transformers pick (cpu/cuda/mps).
         self._model: SentenceTransformer | None = None
@@ -52,18 +59,19 @@ class LocalEmbedder:
 
         logger.info(
             "Loading local embedding model %s (first load may download ~400 MB)",
-            self.model_name,
+            self._hf_model_name,
         )
-        model = SentenceTransformer(self.model_name, device=self._device)
+        model = SentenceTransformer(self._hf_model_name, device=self._device)
         # sentence-transformers 5.x renamed the method; keep a fallback for
         # 3.x/4.x so the dependency pin stays wide.
-        get_dim = getattr(
-            model, "get_embedding_dimension", None
-        ) or model.get_sentence_embedding_dimension
+        get_dim = (
+            getattr(model, "get_embedding_dimension", None)
+            or model.get_sentence_embedding_dimension
+        )
         dim = get_dim()
         if dim != _EXPECTED_DIM:
             raise RuntimeError(
-                f"Local embedding model {self.model_name!r} emits {dim}-dim "
+                f"Local embedding model {self._hf_model_name!r} emits {dim}-dim "
                 f"vectors but the pgvector column expects {_EXPECTED_DIM}. "
                 "Either pick a 768-dim model or migrate the Passage.embedding column."
             )
@@ -87,10 +95,24 @@ class LocalEmbedder:
             convert_to_numpy=True,
         )
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Embed a list of texts. Returns one 768-dim unit-norm vector per text."""
-        if not texts:
-            return []
+    async def _embed_raw(self, texts: list[str]) -> list[list[float]]:
         model = await self._ensure_model()
         arr = await asyncio.to_thread(self._encode_sync, model, texts)
         return arr.tolist()
+
+    async def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts with the BGE retrieval prefix."""
+        if not texts:
+            return []
+        prefixed = [_BGE_QUERY_PREFIX + t for t in texts]
+        return await self._embed_raw(prefixed)
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Embed document/passage texts (no prefix)."""
+        if not texts:
+            return []
+        return await self._embed_raw(texts)
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Deprecated alias for embed_documents. Prefer embed_documents for new code."""
+        return await self.embed_documents(texts)

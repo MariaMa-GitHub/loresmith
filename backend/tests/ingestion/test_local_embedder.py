@@ -4,6 +4,7 @@ We stub `sentence_transformers` at sys.modules level so the real library (and
 its heavy torch + transformers transitive imports) never loads during tests.
 This keeps the suite fast and CI offline.
 """
+
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
@@ -122,3 +123,69 @@ async def test_local_embedder_passes_normalize_flag(stub_st):
     await embedder.embed(["x"])
 
     assert stub_st.captured_encode_kwargs.get("normalize_embeddings") is True
+
+
+def test_model_name_has_asym_suffix():
+    from app.ingestion.local_embedder import LocalEmbedder
+
+    embedder = LocalEmbedder()
+    assert embedder.model_name == "BAAI/bge-base-en-v1.5:asym"
+
+
+@pytest.mark.asyncio
+async def test_embed_queries_applies_prefix(stub_st):
+    from unittest.mock import patch
+
+    from app.ingestion.local_embedder import LocalEmbedder
+
+    embedder = LocalEmbedder()
+    captured: list[list[str]] = []
+
+    original_encode_sync = embedder._encode_sync
+
+    def capture_encode(model, texts):
+        captured.append(list(texts))
+        return original_encode_sync(model, texts)
+
+    with patch.object(embedder, "_encode_sync", side_effect=capture_encode):
+        await embedder.embed_queries(["what is zagreus?"])
+
+    assert len(captured) == 1
+    assert captured[0][0].startswith("Represent this sentence for searching relevant passages: ")
+
+
+@pytest.mark.asyncio
+async def test_embed_documents_no_prefix(stub_st):
+    from unittest.mock import patch
+
+    from app.ingestion.local_embedder import LocalEmbedder
+
+    embedder = LocalEmbedder()
+    captured: list[list[str]] = []
+
+    original_encode_sync = embedder._encode_sync
+
+    def capture_encode(model, texts):
+        captured.append(list(texts))
+        return original_encode_sync(model, texts)
+
+    with patch.object(embedder, "_encode_sync", side_effect=capture_encode):
+        await embedder.embed_documents(["Zagreus is the son of Hades."])
+
+    assert len(captured) == 1
+    assert captured[0][0] == "Zagreus is the son of Hades."
+
+
+@pytest.mark.asyncio
+async def test_embed_is_alias_for_embed_documents(stub_st):
+    from unittest.mock import AsyncMock, patch
+
+    from app.ingestion.local_embedder import LocalEmbedder
+
+    embedder = LocalEmbedder()
+    mock_embed_documents = AsyncMock(return_value=[[0.0] * 768])
+
+    with patch.object(embedder, "embed_documents", mock_embed_documents):
+        await embedder.embed(["test text"])
+
+    mock_embed_documents.assert_called_once_with(["test text"])

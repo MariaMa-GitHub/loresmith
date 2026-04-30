@@ -4,6 +4,7 @@ Usage:
     python -m app.ingestion.pipeline --game hades
     python -m app.ingestion.pipeline --game hades --dry-run
 """
+
 import argparse
 import asyncio
 import logging
@@ -49,13 +50,9 @@ def make_embedder(settings: Settings) -> Embedder:
         return LocalEmbedder(model_name=settings.local_embedding_model)
     if backend == "gemini":
         if not settings.gemini_api_key:
-            raise RuntimeError(
-                "embedding_backend=gemini requires GEMINI_API_KEY to be set."
-            )
+            raise RuntimeError("embedding_backend=gemini requires GEMINI_API_KEY to be set.")
         return GeminiEmbedder(api_key=settings.gemini_api_key)
-    raise ValueError(
-        f"Unknown embedding_backend={backend!r}; expected 'local' or 'gemini'."
-    )
+    raise ValueError(f"Unknown embedding_backend={backend!r}; expected 'local' or 'gemini'.")
 
 
 @dataclass
@@ -121,7 +118,9 @@ async def run_ingestion(
         if entity_extractor is not None:
             extracted_entities.extend(
                 await entity_extractor.extract(
-                    page_text=page.text, source_url=url, game_slug=adapter.slug,
+                    page_text=page.text,
+                    source_url=url,
+                    game_slug=adapter.slug,
                 )
             )
 
@@ -135,8 +134,7 @@ async def run_ingestion(
             Passage.embedding_backend,
             Passage.embedding_model,
             Passage.embedding.is_not(None).label("has_embedding"),
-        )
-        .where(Passage.game_slug == adapter.slug)
+        ).where(Passage.game_slug == adapter.slug)
     )
     existing_rows = existing_result.all()
     for row in existing_rows:
@@ -201,7 +199,8 @@ async def run_ingestion(
         ],
     ]
     embedding_texts = [chunk.content for chunk in chunks_needing_embeddings]
-    embeddings = await embedder.embed(embedding_texts) if embedding_texts else []
+    embed_fn = getattr(embedder, "embed_documents", embedder.embed)
+    embeddings = await embed_fn(embedding_texts) if embedding_texts else []
     if len(embeddings) != len(chunks_needing_embeddings):
         raise RuntimeError(
             "Embedder returned a mismatched number of vectors for the chunks being ingested."
@@ -216,16 +215,18 @@ async def run_ingestion(
         tier = 0
         if spoiler_tagger is not None:
             tier = await spoiler_tagger.tag_async(chunk.content, game_slug=adapter.slug)
-        rows.append({
-            "game_slug": adapter.slug,
-            "source_url": chunk.source_url,
-            "content": chunk.content,
-            "content_hash": chunk.content_hash,
-            "spoiler_tier": tier,
-            "embedding": embeddings_by_key[(chunk.source_url, chunk.content_hash)],
-            "embedding_backend": embedder_backend,
-            "embedding_model": embedder_model,
-        })
+        rows.append(
+            {
+                "game_slug": adapter.slug,
+                "source_url": chunk.source_url,
+                "content": chunk.content,
+                "content_hash": chunk.content_hash,
+                "spoiler_tier": tier,
+                "embedding": embeddings_by_key[(chunk.source_url, chunk.content_hash)],
+                "embedding_backend": embedder_backend,
+                "embedding_model": embedder_model,
+            }
+        )
 
     updates = []
     for chunk, existing, needs_embedding_refresh in retained_to_refresh:
@@ -248,9 +249,7 @@ async def run_ingestion(
 
     if spoiler_tagger is not None:
         nonzero = sum(1 for r in rows if r["spoiler_tier"] > 0) + sum(
-            1
-            for _, values in updates
-            if values.get("spoiler_tier", 0) > 0
+            1 for _, values in updates if values.get("spoiler_tier", 0) > 0
         )
         logger.info(
             "Spoiler-tagged %d chunks (non-zero tier: %d)",
@@ -280,7 +279,9 @@ async def run_ingestion(
 
     if not dry_run and entity_extractor is not None and extracted_entities:
         await upsert_entities(
-            session=session, game_slug=adapter.slug, entities=extracted_entities,
+            session=session,
+            game_slug=adapter.slug,
+            entities=extracted_entities,
         )
 
     return IngestResult(
@@ -312,11 +313,7 @@ async def _main(args: argparse.Namespace) -> None:
     scraper = Scraper(
         cache_dir=Path(".scraper_cache") / args.game,
         crawl_delay=adapter.sources[0].crawl_delay,
-        cache_ttl=(
-            None
-            if args.cache_ttl_hours <= 0
-            else timedelta(hours=args.cache_ttl_hours)
-        ),
+        cache_ttl=(None if args.cache_ttl_hours <= 0 else timedelta(hours=args.cache_ttl_hours)),
         force_refresh=args.refresh_cache,
     )
     embedder = make_embedder(settings)

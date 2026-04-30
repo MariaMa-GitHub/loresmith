@@ -107,7 +107,8 @@ class RAGPipeline:
             "rag.retrieve",
             metadata={"game": self._game_slug, "max_spoiler_tier": max_spoiler_tier},
         ) as span:
-            embeddings = await self._embedder.embed([question])
+            embed_fn = getattr(self._embedder, "embed_queries", self._embedder.embed)
+            embeddings = await embed_fn([question])
             query_embedding = embeddings[0]
 
             bm25_hits = self._bm25.search(
@@ -242,7 +243,8 @@ class RAGPipeline:
         # Compute the query embedding once; reused for both cache lookup and write.
         identity = self._cache_identity()
         if self._cache is not None and revision is not None and identity is not None:
-            q_embed: list[float] | None = (await self._embedder.embed([effective_question]))[0]
+            _embed_fn = getattr(self._embedder, "embed_queries", self._embedder.embed)
+            q_embed: list[float] | None = (await _embed_fn([effective_question]))[0]
         else:
             q_embed = None
 

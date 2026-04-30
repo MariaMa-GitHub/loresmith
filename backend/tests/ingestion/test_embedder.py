@@ -54,12 +54,14 @@ async def test_gemini_embedder_empty_list_returns_empty():
 
 def test_embedder_embedding_dim():
     from app.db.models import EMBEDDING_DIM
+
     assert EMBEDDING_DIM == 768
 
 
 @pytest.mark.asyncio
 async def test_gemini_embedder_splits_into_batches_at_boundary():
     """51 texts → 2 API calls (batch of 50, then batch of 1)."""
+
     def make_result(n):
         result = MagicMock()
         result.embeddings = [MagicMock(values=[0.0] * 768) for _ in range(n)]
@@ -76,3 +78,49 @@ async def test_gemini_embedder_splits_into_batches_at_boundary():
 
     assert len(results) == 51
     assert mock_embed.call_count == 2
+
+
+def test_gemini_model_name_has_asym_suffix():
+    with patch("app.ingestion.embedder.genai.Client"):
+        embedder = GeminiEmbedder(api_key="test-key")
+    assert embedder.model_name == "gemini-embedding-001:asym"
+
+
+@pytest.mark.asyncio
+async def test_gemini_embed_queries_uses_retrieval_query_task_type():
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.1] * 768
+    mock_result = MagicMock()
+    mock_result.embeddings = [mock_embedding]
+
+    with patch("app.ingestion.embedder.genai.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_embed = AsyncMock(return_value=mock_result)
+        mock_client.aio.models.embed_content = mock_embed
+        mock_client_cls.return_value = mock_client
+
+        embedder = GeminiEmbedder(api_key="test-key")
+        await embedder.embed_queries(["what is zagreus?"])
+
+    config = mock_embed.call_args.kwargs["config"]
+    assert config.task_type == "RETRIEVAL_QUERY"
+
+
+@pytest.mark.asyncio
+async def test_gemini_embed_documents_uses_retrieval_document_task_type():
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.1] * 768
+    mock_result = MagicMock()
+    mock_result.embeddings = [mock_embedding]
+
+    with patch("app.ingestion.embedder.genai.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_embed = AsyncMock(return_value=mock_result)
+        mock_client.aio.models.embed_content = mock_embed
+        mock_client_cls.return_value = mock_client
+
+        embedder = GeminiEmbedder(api_key="test-key")
+        await embedder.embed_documents(["Zagreus is the son of Hades."])
+
+    config = mock_embed.call_args.kwargs["config"]
+    assert config.task_type == "RETRIEVAL_DOCUMENT"

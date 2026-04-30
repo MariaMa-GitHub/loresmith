@@ -57,6 +57,9 @@ async def test_run_ingestion_returns_ingest_result():
 
     fake_embedder = MagicMock()
     fake_embedder.embed = AsyncMock(side_effect=lambda texts: [[0.0] * 768 for _ in texts])
+    fake_embedder.embed_documents = AsyncMock(
+        side_effect=lambda texts: [[0.0] * 768 for _ in texts]
+    )
 
     select_result = MagicMock()
     select_result.all.return_value = []
@@ -124,6 +127,9 @@ async def test_run_ingestion_dry_run_skips_db_writes():
 
     fake_embedder = MagicMock()
     fake_embedder.embed = AsyncMock(side_effect=lambda texts: [[0.0] * 768 for _ in texts])
+    fake_embedder.embed_documents = AsyncMock(
+        side_effect=lambda texts: [[0.0] * 768 for _ in texts]
+    )
 
     select_result = MagicMock()
     select_result.all.return_value = []
@@ -161,6 +167,9 @@ async def test_pipeline_uses_spoiler_tagger():
     fake_chunker = Chunker(chunk_size=5, overlap=1)
     fake_embedder = MagicMock()
     fake_embedder.embed = AsyncMock(side_effect=lambda texts: [[0.0] * 768 for _ in texts])
+    fake_embedder.embed_documents = AsyncMock(
+        side_effect=lambda texts: [[0.0] * 768 for _ in texts]
+    )
 
     fake_tagger = MagicMock(spec=SpoilerTagger)
     fake_tagger.tag_async = AsyncMock(return_value=0)
@@ -462,6 +471,7 @@ async def test_run_ingestion_reembeds_unchanged_chunks_when_embedding_identity_c
     fake_embedder.backend_name = "gemini"
     fake_embedder.model_name = "gemini-embedding-001"
     fake_embedder.embed = AsyncMock(return_value=[[0.0] * 768])
+    fake_embedder.embed_documents = AsyncMock(return_value=[[0.0] * 768])
 
     existing_row = MagicMock()
     existing_row.id = 8
@@ -498,7 +508,7 @@ async def test_run_ingestion_reembeds_unchanged_chunks_when_embedding_identity_c
         session=fake_session,
     )
 
-    fake_embedder.embed.assert_awaited_once_with([existing_chunk.content])
+    fake_embedder.embed_documents.assert_awaited_once_with([existing_chunk.content])
     assert any(stmt.__visit_name__ == "update" for stmt in executed)
     fake_session.commit.assert_called_once()
     assert result.passages_upserted == 1
@@ -514,13 +524,15 @@ async def test_run_ingestion_upserts_entities_when_extractor_provided(monkeypatc
         return len(entities)
 
     monkeypatch.setattr(
-        "app.ingestion.pipeline.upsert_entities", fake_upsert,
+        "app.ingestion.pipeline.upsert_entities",
+        fake_upsert,
     )
 
     class _Extractor:
         async def extract(self, *, page_text, source_url, game_slug):
-            return [ExtractedEntity(slug="zag", name="Zagreus",
-                                    entity_type="character", description="")]
+            return [
+                ExtractedEntity(slug="zag", name="Zagreus", entity_type="character", description="")
+            ]
 
     fake_page = ScrapedPage(
         url="https://fake.example.com/wiki/Foo",
@@ -533,6 +545,9 @@ async def test_run_ingestion_upserts_entities_when_extractor_provided(monkeypatc
 
     fake_embedder = MagicMock()
     fake_embedder.embed = AsyncMock(side_effect=lambda texts: [[0.0] * 768 for _ in texts])
+    fake_embedder.embed_documents = AsyncMock(
+        side_effect=lambda texts: [[0.0] * 768 for _ in texts]
+    )
     fake_embedder.backend_name = "local"
     fake_embedder.model_name = "bge-base"
 
