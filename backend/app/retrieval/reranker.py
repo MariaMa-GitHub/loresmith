@@ -47,8 +47,13 @@ class NullReranker:
 class CrossEncoderReranker:
     """Cross-encoder reranker (CPU). Lazy-loads the model on first call."""
 
-    def __init__(self, model_name: str = "BAAI/bge-reranker-base") -> None:
+    def __init__(
+        self,
+        model_name: str = "BAAI/bge-reranker-base",
+        score_floor: float | None = None,
+    ) -> None:
         self._model_name = model_name
+        self._score_floor = score_floor
         self._model = None
 
     def _ensure_model(self):
@@ -75,6 +80,8 @@ class CrossEncoderReranker:
         pairs = [(query, h.content) for h in hits]
         scores = await self._score_pairs(pairs)
         scored = list(zip(hits, scores, strict=True))
+        if self._score_floor is not None:
+            scored = [(hit, score) for hit, score in scored if score >= self._score_floor]
         scored.sort(key=lambda pair: pair[1], reverse=True)
         return [
             RerankedHit(

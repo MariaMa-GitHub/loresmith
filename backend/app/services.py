@@ -64,7 +64,10 @@ def build_services() -> Services:
     )
     router = build_llm_router(settings)
     reranker = (
-        CrossEncoderReranker(model_name=settings.reranker_model)
+        CrossEncoderReranker(
+            model_name=settings.reranker_model,
+            score_floor=settings.rerank_score_floor,
+        )
         if settings.reranker_enabled
         else NullReranker()
     )

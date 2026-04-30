@@ -21,13 +21,14 @@ class Settings(BaseSettings):
     # Embeddings
     embedding_backend: str = "local"  # local | gemini
     local_embedding_model: str = "BAAI/bge-base-en-v1.5"  # 768d, matches EMBEDDING_DIM
-    retrieval_top_k_per_method: int = Field(default=10, ge=1)
+    retrieval_top_k_per_method: int = Field(default=20, ge=1)
     retrieval_top_k_final: int = Field(default=5, ge=1)
 
     # Reranker
     reranker_enabled: bool = True
     reranker_model: str = "BAAI/bge-reranker-base"
-    rerank_candidates: int = Field(default=20, ge=1)
+    rerank_candidates: int = Field(default=50, ge=1)
+    rerank_score_floor: float | None = None
 
     # Semantic cache
     semantic_cache_enabled: bool = True

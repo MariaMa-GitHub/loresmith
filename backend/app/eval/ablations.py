@@ -46,6 +46,7 @@ class AblationConfig:
     config_id: str
     rewriter: bool = False
     rerank: bool = False
+    rerank_score_floor: float | None = None
     verifier: bool = False
     cache: bool = False
     tools: bool = False
@@ -73,6 +74,7 @@ def default_matrix() -> list[AblationConfig]:
         AblationConfig("baseline"),
         AblationConfig("+rewriter", rewriter=True),
         AblationConfig("+rerank", rerank=True),
+        AblationConfig("+rerank-gated", rerank=True, rerank_score_floor=0.0),
         AblationConfig("+verifier", verifier=True),
         AblationConfig("+cache", cache=True),
         AblationConfig("+tools", tools=True),
@@ -149,7 +151,14 @@ async def _build_pipeline(
     bm25_index = bm25 if config.retrieval in {"hybrid", "bm25_only"} else _EmptyBM25()
     dense = services.dense if config.retrieval in {"hybrid", "dense_only"} else _EmptyDense()
 
-    reranker = services.reranker if config.rerank else NullReranker()
+    if config.rerank:
+        from app.retrieval.reranker import CrossEncoderReranker
+        reranker = CrossEncoderReranker(
+            model_name=services.settings.reranker_model,
+            score_floor=config.rerank_score_floor,
+        )
+    else:
+        reranker = NullReranker()
     rewriter = (
         QueryRewriter(llm=services.router.for_task(TaskType.REWRITE), tracer=services.tracer)
         if config.rewriter

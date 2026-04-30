@@ -138,7 +138,13 @@ class RAGPipeline:
                     reranked = await self._reranker.rerank(
                         query=question, hits=fused, top_k=self._final_top_k,
                     )
-                    rerank_span.set_output({"num_reranked": len(reranked)})
+                    scores = [r.rerank_score for r in reranked]
+                    rerank_span.set_output({
+                        "num_reranked": len(reranked),
+                        "candidates_in": len(fused),
+                        "min_score": min(scores) if scores else None,
+                        "max_score": max(scores) if scores else None,
+                    })
                     top = reranked
             else:
                 top = fused[: self._final_top_k]
