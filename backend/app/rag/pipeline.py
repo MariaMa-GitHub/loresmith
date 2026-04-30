@@ -8,10 +8,11 @@ from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.tools import ToolCall, ToolDefinition, ToolDispatcher
-from app.rag.citations import normalize_answer_citations
+from app.rag.citations import normalize_answer_citations, parse_inline_citation_indices
 from app.rag.refusal import RefusalPayload, build_refusal
 from app.rag.rewriter import QueryRewriter
 from app.rag.semantic_cache import SemanticCache
+from app.rag.structured_output import AnswerWithUsedPassages
 from app.rag.verifier import Verifier, VerifierVerdict
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.dense import DenseRetriever
@@ -70,6 +71,7 @@ class RAGPipeline:
         tool_dispatcher: ToolDispatcher | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_loop_max_iters: int = 3,
+        answer_structured_output: bool = False,
     ) -> None:
         self._embedder = embedder
         self._bm25 = bm25_index
@@ -90,6 +92,7 @@ class RAGPipeline:
         self._tool_dispatcher = tool_dispatcher
         self._tool_definitions = tool_definitions or []
         self._tool_loop_max_iters = tool_loop_max_iters
+        self._answer_structured_output = answer_structured_output
 
     async def _retrieve(
         self,
@@ -242,7 +245,28 @@ class RAGPipeline:
             "rag.generate",
             metadata={"game": self._game_slug, "model": getattr(self._llm, "model_name", "")},
         ) as span:
-            if self._tool_dispatcher is not None and self._tool_definitions:
+            if (
+                self._answer_structured_output
+                and hasattr(self._llm, "complete_json")
+                and not (self._tool_dispatcher and self._tool_definitions)
+            ):
+                try:
+                    structured = await self._llm.complete_json(
+                        messages=messages,
+                        schema=AnswerWithUsedPassages,
+                    )
+                    answer_text = structured.answer
+                    if not parse_inline_citation_indices(answer_text) and structured.used_passages:
+                        cluster = "".join(f"[{i}]" for i in sorted(structured.used_passages))
+                        answer_text = answer_text.rstrip() + " " + cluster
+                except Exception as exc:
+                    logger.warning(
+                        "structured output failed for %s, falling back to plain completion: %s",
+                        self._game_slug,
+                        exc,
+                    )
+                    answer_text = await self._llm.complete(messages)
+            elif self._tool_dispatcher is not None and self._tool_definitions:
                 if not hasattr(self._llm, "complete_with_tools"):
                     raise RuntimeError(
                         "Tool use requires an answer provider with complete_with_tools support"

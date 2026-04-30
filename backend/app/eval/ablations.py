@@ -50,6 +50,7 @@ class AblationConfig:
     cache: bool = False
     tools: bool = False
     retrieval: str = "hybrid"
+    structured_output: bool = False
 
     def __post_init__(self):
         if self.retrieval not in _VALID_RETRIEVAL:
@@ -75,6 +76,7 @@ def default_matrix() -> list[AblationConfig]:
         AblationConfig("+verifier", verifier=True),
         AblationConfig("+cache", cache=True),
         AblationConfig("+tools", tools=True),
+        AblationConfig("+structured", structured_output=True),
         AblationConfig("full", rewriter=True, rerank=True, verifier=True, cache=True, tools=True),
         AblationConfig("full-no-tools", rewriter=True, rerank=True, verifier=True, cache=True),
         AblationConfig("hybrid-no-dense", retrieval="bm25_only"),
@@ -194,6 +196,7 @@ async def _build_pipeline(
         retrieve_top_k=services.settings.retrieval_top_k_per_method,
         rerank_candidates=services.settings.rerank_candidates,
         final_top_k=services.settings.retrieval_top_k_final,
+        answer_structured_output=config.structured_output,
     )
 
 
@@ -290,8 +293,13 @@ async def run_matrix(
 
     try:
         for config in configs_to_run:
+            skipped_reason: str | None = None
             if config.tools and not provider_supports_tools(answer_provider):
                 skipped_reason = "answer provider lacks complete_with_tools support"
+            elif config.structured_output and not hasattr(answer_provider, "complete_json"):
+                skipped_reason = "answer provider lacks complete_json support"
+
+            if skipped_reason is not None:
                 out_path = output_dir / f"{game_slug}-ablation-{config.config_id}.json"
                 out_path.write_text(
                     json.dumps(

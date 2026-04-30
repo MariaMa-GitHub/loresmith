@@ -486,6 +486,68 @@ async def test_answer_raises_when_tools_enabled_but_provider_lacks_tool_support(
         await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)
 
 
+def test_answer_template_includes_selection_step():
+    from pathlib import Path
+
+    from jinja2 import Environment, FileSystemLoader
+
+    env = Environment(
+        loader=FileSystemLoader(str(Path("app/rag/prompts"))), autoescape=False
+    )
+    template = env.get_template("answer.j2")
+    rendered = template.render(
+        game_display_name="Hades",
+        passages=[{"source_url": "http://x.com", "content": "Zeus is the Olympian god."}],
+        question="Who is Zeus?",
+    )
+    assert "identify which" in rendered.lower() or "cite only" in rendered.lower()
+    assert "do not cite" in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_uses_complete_json_when_structured_output_enabled(
+    mock_session,
+):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.rag.pipeline import RAGPipeline
+    from app.rag.structured_output import AnswerWithUsedPassages
+
+    mock_llm = AsyncMock()
+    mock_llm.model_name = "test-model"
+    mock_structured = AnswerWithUsedPassages(answer="The answer.", used_passages=[1])
+    mock_llm.complete_json = AsyncMock(return_value=mock_structured)
+
+    mock_embedder = AsyncMock()
+    mock_embedder.embed = AsyncMock(return_value=[[0.1] * 5])
+    mock_embedder.embed_queries = AsyncMock(return_value=[[0.1] * 5])
+    mock_embedder.backend_name = "test"
+    mock_embedder.model_name = "test-model"
+
+    mock_bm25 = MagicMock()
+    mock_bm25.search = MagicMock(return_value=[])
+
+    mock_dense = AsyncMock()
+    mock_dense.search = AsyncMock(return_value=[])
+
+    pipeline = RAGPipeline(
+        embedder=mock_embedder,
+        bm25_index=mock_bm25,
+        dense_retriever=mock_dense,
+        llm=mock_llm,
+        game_slug="hades",
+        game_display_name="Hades",
+        answer_structured_output=True,
+    )
+    result = await pipeline.answer(
+        session=mock_session,
+        question="What is the Mirror of Night?",
+        max_spoiler_tier=3,
+    )
+    mock_llm.complete_json.assert_called_once()
+    assert result.answer  # not empty
+
+
 @pytest.mark.asyncio
 async def test_tool_loop_uses_structured_function_call_messages(monkeypatch):
     """After a tool call round, messages must use model_tool_call / tool_results

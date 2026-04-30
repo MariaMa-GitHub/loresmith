@@ -20,3 +20,12 @@ class VerifierVerdictSchema(BaseModel):
     has_sufficient_evidence: bool
     unsupported_claims: list[str] = []
     rewrite_suggestions: list[str] = []
+
+
+class AnswerWithUsedPassages(BaseModel):
+    """Schema for structured answer generation with explicit passage selection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str
+    used_passages: list[int]

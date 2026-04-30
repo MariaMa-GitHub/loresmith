@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     verifier_enabled: bool = True
     verifier_model_tier: Literal["strong", "fast"] = "strong"
 
+    # Structured output
+    answer_structured_output: bool = False
+
     # Tool use
     tools_enabled: bool = True
     tool_loop_max_iters: int = Field(default=3, ge=1, le=8)
