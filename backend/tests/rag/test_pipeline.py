@@ -91,14 +91,18 @@ async def test_rag_pipeline_uses_retrieved_context():
 @pytest.mark.asyncio
 async def test_rag_pipeline_traces_retrieval_and_generation():
     """Pipeline must open spans via the injected tracer on every run."""
+
     async def fake_stream(messages, system=None):
         yield "ok"
 
     trace_names: list[str] = []
 
     class _RecordingSpan:
-        def set_output(self, output): pass
-        def set_metadata(self, metadata): pass
+        def set_output(self, output):
+            pass
+
+        def set_metadata(self, metadata):
+            pass
 
     class _RecordingTracer:
         enabled = True
@@ -208,10 +212,7 @@ async def test_rag_pipeline_uses_configured_top_k(monkeypatch):
     mock_dense.search.assert_awaited_once()
     assert mock_dense.search.await_args.kwargs["top_k"] == 3
     assert mock_dense.search.await_args.kwargs["embedding_backend"] == "local"
-    assert (
-        mock_dense.search.await_args.kwargs["embedding_model"]
-        == "BAAI/bge-base-en-v1.5"
-    )
+    assert mock_dense.search.await_args.kwargs["embedding_model"] == "BAAI/bge-base-en-v1.5"
     assert fused_top_ks == [4]
 
 
@@ -268,6 +269,7 @@ async def test_pipeline_applies_reranker_before_prompt(monkeypatch):
     class _Embedder:
         backend_name = "local"
         model_name = "bge-base"
+
         async def embed(self, texts):
             return [[0.0] * 768 for _ in texts]
 
@@ -292,7 +294,7 @@ async def test_pipeline_applies_reranker_before_prompt(monkeypatch):
         final_top_k=2,
     )
 
-    passages = await p._retrieve(session=None, question="q", max_spoiler_tier=0)
+    passages, _ = await p._retrieve_with_scores(session=None, question="q", max_spoiler_tier=0)
     assert [h["passage_id"] for h in passages] == [3, 2]
 
 
@@ -304,6 +306,7 @@ async def test_answer_returns_cached_response_without_calling_llm(monkeypatch):
     class _Embedder:
         backend_name = "local"
         model_name = "bge-base"
+
         async def embed(self, texts):
             return [[0.2] * 768]
 
@@ -317,6 +320,7 @@ async def test_answer_returns_cached_response_without_calling_llm(monkeypatch):
 
     class _LLM:
         model_name = "fake"
+
         async def complete(self, *a, **kw):
             raise AssertionError("LLM must not be called on cache hit")
 
@@ -331,6 +335,7 @@ async def test_answer_returns_cached_response_without_calling_llm(monkeypatch):
                 citations=[{"index": 1, "source_url": "u", "title": "t"}],
                 similarity=0.99,
             )
+
         async def put(self, **kw):
             raise AssertionError("put must not run on cache hit")
 
@@ -358,6 +363,7 @@ async def test_answer_returns_refusal_when_verifier_rejects(monkeypatch):
     class _Embedder:
         backend_name = "local"
         model_name = "bge-base"
+
         async def embed(self, texts):
             return [[0.1] * 768 for _ in texts]
 
@@ -371,6 +377,7 @@ async def test_answer_returns_refusal_when_verifier_rejects(monkeypatch):
 
     class _LLM:
         model_name = "fake"
+
         async def complete(self, *a, **kw):
             return "Zeus has a secret third brother."
 
@@ -394,9 +401,9 @@ async def test_answer_returns_refusal_when_verifier_rejects(monkeypatch):
     )
 
     async def fake_retrieve(*args, **kwargs):
-        return [{"passage_id": 1, "content": "Zeus …", "source_url": "u"}]
+        return [{"passage_id": 1, "content": "Zeus …", "source_url": "u"}], []
 
-    monkeypatch.setattr(p, "_retrieve", fake_retrieve)
+    monkeypatch.setattr(p, "_retrieve_with_scores", fake_retrieve)
 
     response = await p.answer(session=None, question="who?", max_spoiler_tier=0)
     assert response.status == "insufficient_evidence"
@@ -412,11 +419,13 @@ async def test_answer_runs_tool_loop_and_returns_final_text(monkeypatch):
     class _LLM:
         model_name = "fake"
         calls = []
+
         async def complete_with_tools(self, messages, tools):
             self.calls.append(list(messages))
             if len(self.calls) == 1:
                 return None, [{"name": "entity_lookup", "arguments": {"slug": "zag"}}]
             return "Based on the tool output, Zagreus is the Prince of the Underworld [1].", []
+
         async def complete(self, messages, system=None):
             raise AssertionError("plain complete must not be called when tools succeed")
 
@@ -427,25 +436,34 @@ async def test_answer_runs_tool_loop_and_returns_final_text(monkeypatch):
     class _Embedder:
         backend_name = "local"
         model_name = "bge-base"
-        async def embed(self, texts): return [[0.1] * 768]
+
+        async def embed(self, texts):
+            return [[0.1] * 768]
 
     class _Dense:
-        async def search(self, **kw): return []
+        async def search(self, **kw):
+            return []
 
     class _BM25:
-        def search(self, *a, **kw): return []
+        def search(self, *a, **kw):
+            return []
 
     p = RAGPipeline(
-        embedder=_Embedder(), bm25_index=_BM25(), dense_retriever=_Dense(),
-        llm=_LLM(), game_slug="hades", game_display_name="Hades",
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
         tool_dispatcher=_Dispatcher(),
         tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
         tool_loop_max_iters=3,
     )
-    async def fake_retrieve(*args, **kwargs):
-        return [{"passage_id": 1, "content": "Zagreus …", "source_url": "u"}]
 
-    monkeypatch.setattr(p, "_retrieve", fake_retrieve)
+    async def fake_retrieve(*args, **kwargs):
+        return [{"passage_id": 1, "content": "Zagreus …", "source_url": "u"}], []
+
+    monkeypatch.setattr(p, "_retrieve_with_scores", fake_retrieve)
     response = await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)
     assert "Zagreus" in response.answer
 
@@ -457,6 +475,7 @@ async def test_answer_raises_when_tools_enabled_but_provider_lacks_tool_support(
 
     class _LLM:
         model_name = "fake-plain"
+
         async def complete(self, messages, system=None):
             return "plain answer"
 
@@ -467,17 +486,25 @@ async def test_answer_raises_when_tools_enabled_but_provider_lacks_tool_support(
     class _Embedder:
         backend_name = "local"
         model_name = "bge-base"
-        async def embed(self, texts): return [[0.1] * 768]
+
+        async def embed(self, texts):
+            return [[0.1] * 768]
 
     class _Dense:
-        async def search(self, **kw): return []
+        async def search(self, **kw):
+            return []
 
     class _BM25:
-        def search(self, *a, **kw): return []
+        def search(self, *a, **kw):
+            return []
 
     p = RAGPipeline(
-        embedder=_Embedder(), bm25_index=_BM25(), dense_retriever=_Dense(),
-        llm=_LLM(), game_slug="hades", game_display_name="Hades",
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
         tool_dispatcher=_Dispatcher(),
         tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
         tool_loop_max_iters=3,
@@ -491,9 +518,7 @@ def test_answer_template_includes_selection_step():
 
     from jinja2 import Environment, FileSystemLoader
 
-    env = Environment(
-        loader=FileSystemLoader(str(Path("app/rag/prompts"))), autoescape=False
-    )
+    env = Environment(loader=FileSystemLoader(str(Path("app/rag/prompts"))), autoescape=False)
     template = env.get_template("answer.j2")
     rendered = template.render(
         game_display_name="Hades",
@@ -578,25 +603,34 @@ async def test_tool_loop_uses_structured_function_call_messages(monkeypatch):
     class _Embedder:
         backend_name = "local"
         model_name = "bge-base"
-        async def embed(self, texts): return [[0.1] * 768]
+
+        async def embed(self, texts):
+            return [[0.1] * 768]
 
     class _Dense:
-        async def search(self, **kw): return []
+        async def search(self, **kw):
+            return []
 
     class _BM25:
-        def search(self, *a, **kw): return []
+        def search(self, *a, **kw):
+            return []
 
     p = RAGPipeline(
-        embedder=_Embedder(), bm25_index=_BM25(), dense_retriever=_Dense(),
-        llm=_LLM(), game_slug="hades", game_display_name="Hades",
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
         tool_dispatcher=_Dispatcher(),
         tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
         tool_loop_max_iters=3,
     )
-    async def _fake_retrieve(*a, **kw):
-        return [{"passage_id": 1, "content": "c", "source_url": "u"}]
 
-    monkeypatch.setattr(p, "_retrieve", _fake_retrieve)
+    async def _fake_retrieve(*a, **kw):
+        return [{"passage_id": 1, "content": "c", "source_url": "u"}], []
+
+    monkeypatch.setattr(p, "_retrieve_with_scores", _fake_retrieve)
     await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)
 
     roles = [m["role"] for m in captured_second_messages]
@@ -608,3 +642,66 @@ async def test_tool_loop_uses_structured_function_call_messages(monkeypatch):
         assert "Tool " not in m.get("content", ""), (
             "tool result must not be sent as freeform user text"
         )
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_short_circuits_before_llm():
+    """When relevance_gate_threshold is set and all rerank scores are below it,
+    answer() must return status='insufficient_evidence' without calling llm.complete."""
+    from unittest.mock import AsyncMock
+
+    from app.rag.pipeline import RAGPipeline
+    from app.retrieval.reranker import RerankedHit
+
+    class _LLM:
+        model_name = "fake"
+
+        async def complete(self, *a, **kw):
+            raise AssertionError("LLM must not be called when gate fires")
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.1] * 768 for _ in texts]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, *a, **kw):
+            return []
+
+    low_score = -5.0
+    threshold = 0.0
+
+    class _Reranker:
+        async def rerank(self, query, hits, top_k):
+            return [
+                RerankedHit(
+                    passage_id=1,
+                    rerank_score=low_score,
+                    content="some content",
+                    source_url="http://x.com",
+                )
+            ]
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        reranker=_Reranker(),
+        relevance_gate_threshold=threshold,
+    )
+
+    response = await p.answer(
+        session=AsyncMock(), question="who is the best pizza?", max_spoiler_tier=0
+    )
+    assert response.status == "insufficient_evidence"
+    assert response.answer  # refusal message is non-empty
+    assert response.refusal is not None

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.tools import ToolCall, ToolDefinition, ToolDispatcher
 from app.rag.citations import normalize_answer_citations, parse_inline_citation_indices
 from app.rag.refusal import RefusalPayload, build_refusal
+from app.rag.relevance_gate import should_refuse_for_low_relevance
 from app.rag.rewriter import QueryRewriter
 from app.rag.semantic_cache import SemanticCache
 from app.rag.structured_output import AnswerWithUsedPassages
@@ -42,7 +43,7 @@ class RAGResponse:
     answer: str
     passages: list[dict]  # [{passage_id, content, source_url}]
     citations: list[dict] = field(default_factory=list)
-    status: str = "answered"   # "answered" | "insufficient_evidence"
+    status: str = "answered"  # "answered" | "insufficient_evidence"
     refusal: RefusalPayload | None = None
     verifier_verdict: VerifierVerdict | None = None
 
@@ -72,6 +73,7 @@ class RAGPipeline:
         tool_definitions: list[ToolDefinition] | None = None,
         tool_loop_max_iters: int = 3,
         answer_structured_output: bool = False,
+        relevance_gate_threshold: float | None = None,
     ) -> None:
         self._embedder = embedder
         self._bm25 = bm25_index
@@ -93,13 +95,14 @@ class RAGPipeline:
         self._tool_definitions = tool_definitions or []
         self._tool_loop_max_iters = tool_loop_max_iters
         self._answer_structured_output = answer_structured_output
+        self._relevance_gate_threshold = relevance_gate_threshold
 
-    async def _retrieve(
+    async def _retrieve_with_scores(
         self,
         session: AsyncSession,
         question: str,
         max_spoiler_tier: int,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], list[float]]:
         with self._tracer.trace(
             "rag.retrieve",
             metadata={"game": self._game_slug, "max_spoiler_tier": max_spoiler_tier},
@@ -136,18 +139,23 @@ class RAGPipeline:
                     metadata={"game": self._game_slug, "candidates": len(fused)},
                 ) as rerank_span:
                     reranked = await self._reranker.rerank(
-                        query=question, hits=fused, top_k=self._final_top_k,
+                        query=question,
+                        hits=fused,
+                        top_k=self._final_top_k,
                     )
-                    scores = [r.rerank_score for r in reranked]
-                    rerank_span.set_output({
-                        "num_reranked": len(reranked),
-                        "candidates_in": len(fused),
-                        "min_score": min(scores) if scores else None,
-                        "max_score": max(scores) if scores else None,
-                    })
+                    rerank_scores = [r.rerank_score for r in reranked]
+                    rerank_span.set_output(
+                        {
+                            "num_reranked": len(reranked),
+                            "candidates_in": len(fused),
+                            "min_score": min(rerank_scores) if rerank_scores else None,
+                            "max_score": max(rerank_scores) if rerank_scores else None,
+                        }
+                    )
                     top = reranked
             else:
                 top = fused[: self._final_top_k]
+                rerank_scores = []
 
             passages = [
                 {
@@ -165,7 +173,7 @@ class RAGPipeline:
                     "num_returned": len(passages),
                 }
             )
-            return passages
+            return passages, rerank_scores
 
     def _build_prompt(self, question: str, passages: list[dict]) -> str:
         template = _JINJA_ENV.get_template("answer.j2")
@@ -190,8 +198,7 @@ class RAGPipeline:
                     )
             except Exception as exc:
                 logger.warning(
-                    "Query rewrite failed for %s; falling back to the "
-                    "original question: %s",
+                    "Query rewrite failed for %s; falling back to the original question: %s",
                     self._game_slug,
                     exc,
                 )
@@ -205,7 +212,9 @@ class RAGPipeline:
         history: list[dict] | None = None,
     ) -> tuple[list[dict], list[dict]]:
         effective_question = await self._effective_question(question, history)
-        passages = await self._retrieve(session, effective_question, max_spoiler_tier)
+        passages, _ = await self._retrieve_with_scores(
+            session, effective_question, max_spoiler_tier
+        )
         prompt = self._build_prompt(effective_question, passages)
         return [{"role": "user", "content": prompt}], passages
 
@@ -243,7 +252,27 @@ class RAGPipeline:
         if cached is not None:
             return cached
 
-        passages = await self._retrieve(session, effective_question, max_spoiler_tier)
+        passages, rerank_scores = await self._retrieve_with_scores(
+            session, effective_question, max_spoiler_tier
+        )
+
+        if should_refuse_for_low_relevance(rerank_scores, self._relevance_gate_threshold):
+            refusal = build_refusal(
+                question=effective_question,
+                verdict=VerifierVerdict(
+                    is_faithful=False,
+                    has_sufficient_evidence=False,
+                ),
+                passages=passages,
+            )
+            return RAGResponse(
+                answer=refusal.message,
+                passages=passages,
+                citations=[],
+                status="insufficient_evidence",
+                refusal=refusal,
+            )
+
         prompt = self._build_prompt(effective_question, passages)
         messages = [{"role": "user", "content": prompt}]
 
@@ -331,7 +360,11 @@ class RAGPipeline:
         return backend, model
 
     async def _lookup_cache(
-        self, session, question: str, revision: str | None, max_spoiler_tier: int,
+        self,
+        session,
+        question: str,
+        revision: str | None,
+        max_spoiler_tier: int,
         query_embedding: list[float] | None,
     ) -> RAGResponse | None:
         identity = self._cache_identity()
@@ -407,4 +440,3 @@ class RAGPipeline:
                 results.append({"name": call["name"], "result": result})
             messages.append({"role": "tool_results", "results": results})
         return await self._llm.complete(messages)
-

@@ -52,6 +52,7 @@ class AblationConfig:
     tools: bool = False
     retrieval: str = "hybrid"
     structured_output: bool = False
+    relevance_gate_threshold: float | None = None
 
     def __post_init__(self):
         if self.retrieval not in _VALID_RETRIEVAL:
@@ -75,6 +76,7 @@ def default_matrix() -> list[AblationConfig]:
         AblationConfig("+rewriter", rewriter=True),
         AblationConfig("+rerank", rerank=True),
         AblationConfig("+rerank-gated", rerank=True, rerank_score_floor=0.0),
+        AblationConfig("+relevance-gate", rerank=True, relevance_gate_threshold=0.0),
         AblationConfig("+verifier", verifier=True),
         AblationConfig("+cache", cache=True),
         AblationConfig("+tools", tools=True),
@@ -93,6 +95,7 @@ def render_markdown_report(*, game_slug: str, rows: list[dict]) -> str:
         "| config | faithfulness | recall@5 | citation_valid | correctness | avg_latency_ms |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
+
     def fmt(x):
         return "-" if x is None else (f"{x:.2f}" if isinstance(x, float) else str(x))
 
@@ -153,6 +156,7 @@ async def _build_pipeline(
 
     if config.rerank:
         from app.retrieval.reranker import CrossEncoderReranker
+
         reranker = CrossEncoderReranker(
             model_name=services.settings.reranker_model,
             score_floor=config.rerank_score_floor,
@@ -206,6 +210,7 @@ async def _build_pipeline(
         rerank_candidates=services.settings.rerank_candidates,
         final_top_k=services.settings.retrieval_top_k_final,
         answer_structured_output=config.structured_output,
+        relevance_gate_threshold=config.relevance_gate_threshold,
     )
 
 
@@ -283,10 +288,7 @@ async def run_matrix(
         existing_ids = {r.config_id for r in skipped_existing}
         configs_to_run = [c for c in all_configs if c.config_id not in existing_ids]
         if existing_ids:
-            print(
-                f"[resume] Skipping already-complete configs: "
-                f"{sorted(existing_ids)}"
-            )
+            print(f"[resume] Skipping already-complete configs: {sorted(existing_ids)}")
     else:
         configs_to_run = all_configs
         skipped_existing = []
@@ -428,10 +430,7 @@ def _main() -> None:
         valid_ids = {c.config_id for c in full_matrix}
         unknown = [c for c in args.configs if c not in valid_ids]
         if unknown:
-            parser.error(
-                f"Unknown config IDs: {unknown}. "
-                f"Valid IDs: {sorted(valid_ids)}"
-            )
+            parser.error(f"Unknown config IDs: {unknown}. Valid IDs: {sorted(valid_ids)}")
         selected = [c for c in full_matrix if c.config_id in set(args.configs)]
     else:
         selected = None  # run_matrix will use full_matrix

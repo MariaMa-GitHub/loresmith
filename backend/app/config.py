@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_candidates: int = Field(default=50, ge=1)
     rerank_score_floor: float | None = None
+    relevance_gate_threshold: float | None = None
 
     # Semantic cache
     semantic_cache_enabled: bool = True
