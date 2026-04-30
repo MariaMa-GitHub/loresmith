@@ -64,6 +64,9 @@ class Settings(BaseSettings):
         "https://loresmith.vercel.app",
     ]
 
+    # Ingestion
+    chunker_strategy: Literal["fixed", "section_aware"] = "fixed"
+
     # Security
     ingest_token: str = "change-me"
     anon_session_cookie_name: str = "loresmith_anon_session"

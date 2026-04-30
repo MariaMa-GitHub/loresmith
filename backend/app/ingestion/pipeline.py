@@ -94,6 +94,7 @@ async def run_ingestion(
     dry_run: bool = False,
     spoiler_tagger: SpoilerTagger | None = None,
     entity_extractor: EntityExtractor | None = None,
+    settings: Settings | None = None,
 ) -> IngestResult:
     chunker = chunker or adapter.chunker
     embedder_backend, embedder_model = _embedder_identity(embedder)
@@ -103,6 +104,7 @@ async def run_ingestion(
     failed_urls: set[str] = set()
     all_chunks = []
     extracted_entities: list[ExtractedEntity] = []
+    use_section_aware = settings is not None and settings.chunker_strategy == "section_aware"
 
     for url in urls:
         page = await scraper.fetch(url)
@@ -113,7 +115,10 @@ async def run_ingestion(
             failed_urls.add(url)
             continue
         pages_fetched += 1
-        chunks = chunker.chunk(page.text, url, title=page.title)
+        if use_section_aware and page.sections:
+            chunks = chunker.chunk_sections(page.sections, title=page.title, source_url=page.url)
+        else:
+            chunks = chunker.chunk(page.text, url, title=page.title)
         all_chunks.extend(chunks)
         if entity_extractor is not None:
             extracted_entities.extend(
@@ -341,6 +346,7 @@ async def _main(args: argparse.Namespace) -> None:
                 dry_run=args.dry_run,
                 spoiler_tagger=spoiler_tagger,
                 entity_extractor=entity_extractor,
+                settings=settings,
             )
     finally:
         tracer.flush()
