@@ -31,6 +31,9 @@ class FakeProvider:
     async def complete_json(self, messages, schema, system=None):
         return schema()
 
+    async def complete_with_tools(self, messages, tools, system=None):
+        return ("answer", [])
+
 
 def test_fake_provider_satisfies_protocol():
     assert isinstance(FakeProvider(), LLMProvider)

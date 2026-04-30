@@ -52,3 +52,17 @@ class LLMProvider(Protocol):
         do not silently coerce malformed output into a default verdict.
         """
         ...
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        system: str | None = None,
+    ) -> tuple[str | None, list[dict]]:
+        """Tool-augmented completion.
+
+        Returns ``(text, [])`` when the model responds with text, or
+        ``(None, calls)`` when the model emits one or more tool calls, where
+        each call is ``{"name": str, "arguments": dict}``.
+        """
+        ...

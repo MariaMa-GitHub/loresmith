@@ -56,6 +56,33 @@ class OllamaProvider:
             content = response.json()["message"]["content"]
         return schema.model_validate_json(content)
 
+    async def complete_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        system: str | None = None,
+    ) -> tuple[str | None, list[dict]]:
+        payload = {
+            "model": self.model_name,
+            "messages": self._build_messages(messages, system),
+            "tools": tools,
+            "stream": False,
+        }
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(f"{self._base_url}/api/chat", json=payload)
+            response.raise_for_status()
+            msg = response.json()["message"]
+        tool_calls = msg.get("tool_calls") or []
+        if tool_calls:
+            return (
+                None,
+                [
+                    {"name": call["function"]["name"], "arguments": call["function"]["arguments"]}
+                    for call in tool_calls
+                ],
+            )
+        return (msg.get("content"), [])
+
     async def stream(
         self,
         messages: list[dict],
