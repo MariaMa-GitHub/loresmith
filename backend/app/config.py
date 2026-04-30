@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # Reranker
     reranker_enabled: bool = True
-    reranker_model: str = "BAAI/bge-reranker-base"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_candidates: int = Field(default=50, ge=1)
     rerank_score_floor: float | None = None
 

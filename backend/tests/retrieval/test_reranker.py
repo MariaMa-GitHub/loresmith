@@ -55,3 +55,12 @@ async def test_cross_encoder_respects_top_k_larger_than_input(monkeypatch):
     result = await reranker.rerank(query="q", hits=hits, top_k=10)
     assert len(result) == 1
     assert result[0].passage_id == 1
+
+
+@pytest.mark.slow
+def test_v2_m3_loads_without_error():
+    pytest.importorskip("sentence_transformers")
+    reranker = CrossEncoderReranker(model_name="BAAI/bge-reranker-v2-m3")
+    model = reranker._ensure_model()
+    assert model is not None
+    assert model.max_seq_length == 8192

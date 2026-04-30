@@ -49,7 +49,7 @@ class CrossEncoderReranker:
 
     def __init__(
         self,
-        model_name: str = "BAAI/bge-reranker-base",
+        model_name: str = "BAAI/bge-reranker-v2-m3",
         score_floor: float | None = None,
     ) -> None:
         self._model_name = model_name
@@ -59,9 +59,9 @@ class CrossEncoderReranker:
     def _ensure_model(self):
         if self._model is None:
             from sentence_transformers import CrossEncoder
-            # max_length matches the model's training window; bge-reranker-base
-            # truncates on its own above 512 tokens.
-            self._model = CrossEncoder(self._model_name, max_length=512)
+            # max_length matches bge-reranker-v2-m3's 8K training window; avoids
+            # silent truncation on passages that exceed 512 tokens.
+            self._model = CrossEncoder(self._model_name, max_length=8192)
         return self._model
 
     async def _score_pairs(self, pairs: list[tuple[str, str]]) -> list[float]:
