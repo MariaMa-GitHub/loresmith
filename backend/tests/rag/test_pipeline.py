@@ -785,3 +785,102 @@ async def test_answer_uses_embed_queries_for_cache_embedding():
 
     embed_queries_mock.assert_awaited_once_with(["who is nyx?"])
     embed_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_emits_per_iteration_span(monkeypatch):
+    """_run_tool_loop must open a 'rag.tool_loop.iter' span for each iteration."""
+    from app.llm.tools import ToolDefinition
+    from app.rag.pipeline import RAGPipeline
+
+    iter_spans: list[dict] = []
+
+    class _RecordingSpan:
+        def __init__(self, name, metadata):
+            self.name = name
+            self.metadata = dict(metadata or {})
+            self.output = None
+            self.extra_meta = {}
+            iter_spans.append(self)
+
+        def set_output(self, output):
+            self.output = output
+
+        def set_metadata(self, meta):
+            self.extra_meta.update(meta)
+
+    class _RecordingTracer:
+        enabled = True
+
+        def trace(self, name, metadata=None, **kwargs):
+            from contextlib import contextmanager
+
+            span = _RecordingSpan(name, metadata)
+
+            @contextmanager
+            def _cm():
+                yield span
+
+            return _cm()
+
+    class _LLM:
+        model_name = "fake"
+        call_count = 0
+
+        async def complete_with_tools(self, messages, tools):
+            self.call_count += 1
+            if self.call_count == 1:
+                return None, [{"name": "entity_lookup", "arguments": {"slug": "zag"}}]
+            return "Final answer.", []
+
+        async def complete(self, messages, system=None):
+            return "fallback"
+
+    class _Dispatcher:
+        async def run(self, *, session, call):
+            return {"name": "Zagreus"}
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.1] * 768]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, *a, **kw):
+            return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        tracer=_RecordingTracer(),
+        tool_dispatcher=_Dispatcher(),
+        tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
+        tool_loop_max_iters=3,
+    )
+
+    async def fake_retrieve(*args, **kwargs):
+        return [{"passage_id": 1, "content": "ctx", "source_url": "u"}], []
+
+    monkeypatch.setattr(p, "_retrieve_with_scores", fake_retrieve)
+    await p.answer(session=None, question="who is zagreus?", max_spoiler_tier=0)
+
+    tool_loop_spans = [s for s in iter_spans if s.name == "rag.tool_loop.iter"]
+    assert len(tool_loop_spans) == 2, (
+        f"Expected 2 tool_loop.iter spans (one per iteration), got {len(tool_loop_spans)}"
+    )
+    assert tool_loop_spans[0].metadata.get("iter") == 0
+    assert tool_loop_spans[1].metadata.get("iter") == 1
+    # First iteration emitted tool calls
+    assert tool_loop_spans[0].extra_meta.get("tool_calls") == ["entity_lookup"]
+    # Second iteration returned text
+    assert tool_loop_spans[1].output == "Final answer."

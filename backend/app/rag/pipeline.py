@@ -422,13 +422,22 @@ class RAGPipeline:
             {"name": t.name, "description": t.description, "parameters": t.parameters}
             for t in self._tool_definitions
         ]
-        for _ in range(self._tool_loop_max_iters):
-            text, tool_calls = await self._llm.complete_with_tools(messages, tools)
-            if text is not None:
-                return text
-            if not tool_calls:
-                # Model returned neither text nor tool calls; fall back to plain completion.
-                return await self._llm.complete(messages)
+        for i in range(self._tool_loop_max_iters):
+            with self._tracer.trace(
+                "rag.tool_loop.iter",
+                metadata={"game": self._game_slug, "iter": i},
+            ) as span:
+                text, tool_calls = await self._llm.complete_with_tools(messages, tools)
+                if text is not None:
+                    span.set_output(text)
+                    return text
+                if not tool_calls:
+                    # Model returned neither text nor tool calls; fall back to plain completion.
+                    fallback = await self._llm.complete(messages)
+                    span.set_output(fallback)
+                    return fallback
+                span.set_metadata({"tool_calls": [c["name"] for c in tool_calls]})
+                span.set_output("")
             # Preserve the model's function_call turn in conversation history so
             # the next API call receives the correct function_call → function_response
             # structure that Gemini requires.
