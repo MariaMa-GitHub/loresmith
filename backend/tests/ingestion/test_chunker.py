@@ -1,6 +1,7 @@
 import hashlib
 
 from app.ingestion.chunker import Chunk, Chunker
+from app.ingestion.section_extractor import SectionRecord
 
 
 def test_chunk_has_content_hash():
@@ -77,3 +78,41 @@ def test_chunker_raises_if_overlap_not_less_than_chunk_size():
     import pytest
     with pytest.raises(ValueError):
         Chunker(chunk_size=10, overlap=10)
+
+
+# ---------------------------------------------------------------------------
+# chunk_sections tests
+# ---------------------------------------------------------------------------
+
+def test_chunk_sections_short_section_is_single_chunk():
+    chunker = Chunker(chunk_size=400, overlap=50)
+    records = [SectionRecord(section_path=("Overview",), text="one two three", kind="prose")]
+    chunks = chunker.chunk_sections(records, title="Zagreus", source_url="https://example.com")
+    assert len(chunks) == 1
+    assert chunks[0].source_url == "https://example.com"
+
+
+def test_chunk_sections_oversized_section_word_windows():
+    chunker = Chunker(chunk_size=10, overlap=2)
+    # 30 words — well above chunk_size=10
+    text = " ".join([f"word{i}" for i in range(30)])
+    records = [SectionRecord(section_path=("Weapons",), text=text, kind="prose")]
+    chunks = chunker.chunk_sections(records, title="Weapons", source_url="https://example.com")
+    assert len(chunks) >= 3
+
+
+def test_chunk_sections_title_and_path_in_content():
+    chunker = Chunker(chunk_size=400, overlap=50)
+    records = [
+        SectionRecord(
+            section_path=("Mirror of Night", "Privileged Status"),
+            text="Grants bonus damage.",
+            kind="prose",
+        )
+    ]
+    chunks = chunker.chunk_sections(records, title="Zagreus", source_url="https://example.com")
+    assert len(chunks) == 1
+    content = chunks[0].content
+    assert "Zagreus" in content
+    assert "Mirror of Night" in content
+    assert "Privileged Status" in content

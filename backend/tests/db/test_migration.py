@@ -57,7 +57,7 @@ async def _inspect_migrated_schema(database_url: str) -> None:
             assert vector_ext.scalar_one() == "vector"
 
             version = await conn.execute(text("SELECT version_num FROM alembic_version"))
-            assert version.scalar_one() == "006"
+            assert version.scalar_one() == "008"
 
             constraint = await conn.execute(
                 text(
@@ -121,6 +121,43 @@ async def _inspect_migrated_schema(database_url: str) -> None:
                 "embedding_backend",
                 "embedding_model",
             ]
+
+            # Migration 007: semantic_cache scope columns
+            cache_scope_columns = await conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'semantic_cache'
+                      AND column_name IN (
+                          'corpus_revision', 'embedding_backend',
+                          'embedding_model', 'max_spoiler_tier'
+                      )
+                    ORDER BY column_name
+                    """
+                )
+            )
+            assert cache_scope_columns.scalars().all() == [
+                "corpus_revision",
+                "embedding_backend",
+                "embedding_model",
+                "max_spoiler_tier",
+            ]
+
+            # Migration 008: chat_messages.response_meta
+            response_meta_column = await conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'chat_messages'
+                      AND column_name = 'response_meta'
+                    """
+                )
+            )
+            assert response_meta_column.scalar_one() == "response_meta"
     finally:
         await engine.dispose()
 

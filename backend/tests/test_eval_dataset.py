@@ -1,20 +1,22 @@
 import json
+import re
 from collections import Counter
 from pathlib import Path
+from urllib.parse import unquote
 
 from app.eval.source_identity import resolve_source_identities
 
 DATASET_PATH = Path(__file__).parent.parent / "app" / "eval" / "datasets" / "hades.jsonl"
 VALID_STRATA = {"factual", "multi_hop", "ambiguous", "adversarial"}
 MIN_STRATUM_COUNTS = {
-    "factual": 50,
-    "multi_hop": 35,
-    "ambiguous": 20,
-    "adversarial": 20,
+    "factual": 60,
+    "multi_hop": 60,
+    "ambiguous": 40,
+    "adversarial": 40,
 }
-MIN_GOLD_SOURCE_ANNOTATED = 30
-MIN_MULTI_TURN_ANNOTATED = 5
-MIN_REFUSAL_ANNOTATED = 8
+MIN_GOLD_SOURCE_ANNOTATED = 45
+MIN_MULTI_TURN_ANNOTATED = 8
+MIN_REFUSAL_ANNOTATED = 15
 
 
 def load_questions():
@@ -25,9 +27,9 @@ def test_dataset_exists():
     assert DATASET_PATH.exists(), f"Dataset not found at {DATASET_PATH}"
 
 
-def test_dataset_has_at_least_150_questions():
+def test_dataset_has_at_least_200_questions():
     questions = load_questions()
-    assert len(questions) >= 150, f"Expected >= 150 questions, got {len(questions)}"
+    assert len(questions) >= 200, f"Expected >= 200 questions, got {len(questions)}"
 
 
 def test_all_questions_have_required_fields():
@@ -64,11 +66,11 @@ def test_all_four_strata_represented():
     assert strata == VALID_STRATA, f"Not all strata represented. Found: {strata}"
 
 
-def test_dataset_is_reasonably_stratified_for_week_4_scope():
+def test_dataset_is_reasonably_stratified_for_week_5_scope():
     counts = Counter(q["stratum"] for q in load_questions())
     for stratum, minimum in MIN_STRATUM_COUNTS.items():
         assert counts[stratum] >= minimum, (
-            f"Expected at least {minimum} {stratum} questions by Week 4, "
+            f"Expected at least {minimum} {stratum} questions by Week 5, "
             f"got {counts[stratum]}"
         )
 
@@ -104,7 +106,7 @@ def test_gold_source_annotations_resolve_to_ingested_source_identities():
     )
 
 
-def test_dataset_has_meaningful_annotation_coverage_for_week_4_eval():
+def test_dataset_has_meaningful_annotation_coverage_for_week_5_eval():
     questions = load_questions()
     gold_annotated = [q for q in questions if q.get("gold_source_urls")]
     multi_turn = [q for q in questions if q.get("history")]
@@ -200,3 +202,57 @@ def test_reviewed_regression_examples_are_corrected():
     assert "Blitz Disc" in by_id["hades-122"]["expected_answer"]
     assert "Zeus + Dionysus" in by_id["hades-123"]["expected_answer"]
     assert "Cold Fusion" in by_id["hades-129"]["expected_answer"]
+
+
+def test_gold_annotation_rate_factual_and_multi_hop():
+    """At least 90% of factual + multi_hop items must have a gold_source_url."""
+    items = load_questions()
+    eligible = [i for i in items if i["stratum"] in ("factual", "multi_hop")]
+    annotated = [i for i in eligible if i.get("gold_source_urls")]
+    rate = len(annotated) / len(eligible) if eligible else 1.0
+    assert rate >= 0.90, (
+        f"Gold annotation rate {rate:.1%} < 90% "
+        f"({len(annotated)}/{len(eligible)} items)"
+    )
+
+
+def test_gold_url_tail_segment_appears_in_expected_answer():
+    """For each item with gold_source_urls, at least one URL's last path segment
+    must share a content word with the question, expected_answer, or history
+    (case-insensitive, with simple prefix matching for plurals/possessives).
+    Catches obvious wrong-page typos while permitting multi-URL gold sets where
+    some URLs cite broader umbrella pages. Items can opt out by providing an
+    explicit empty list."""
+    stopwords = {"of", "the", "and", "a", "an", "in", "on", "to", "for", "with"}
+
+    for item in load_questions():
+        urls = item.get("gold_source_urls") or []
+        if not urls:
+            continue
+        haystack_parts = [item.get("question", ""), item.get("expected_answer", "")]
+        for message in item.get("history") or []:
+            haystack_parts.append(message.get("content", ""))
+        haystack_words = set(re.findall(r"[a-z]+", " ".join(haystack_parts).lower()))
+
+        def matches(seg_word: str) -> bool:
+            return any(
+                hw == seg_word or hw.startswith(seg_word) or seg_word.startswith(hw)
+                for hw in haystack_words
+                if len(hw) >= 3
+            )
+
+        any_match = False
+        for url in urls:
+            segment = unquote(url.rstrip("/").split("/")[-1]).replace("_", " ").lower()
+            if not segment:
+                continue
+            seg_words = [
+                w for w in re.findall(r"[a-z]+", segment)
+                if w not in stopwords and len(w) >= 3
+            ]
+            if any(matches(w) for w in seg_words):
+                any_match = True
+                break
+        assert any_match, (
+            f"No gold URL tail shares a word with question/answer/history for {item['id']}"
+        )

@@ -11,8 +11,9 @@ def _make_pipeline(*, bm25_hits, dense_hits, llm_stream, rewriter=None):
     """Builder that keeps every test's setup explicit and short."""
     mock_embedder = MagicMock()
     mock_embedder.backend_name = "local"
-    mock_embedder.model_name = "BAAI/bge-base-en-v1.5"
+    mock_embedder.model_name = "BAAI/bge-base-en-v1.5:asym"
     mock_embedder.embed = AsyncMock(return_value=[[0.1] * 768])
+    mock_embedder.embed_queries = AsyncMock(return_value=[[0.1] * 768])
 
     mock_bm25 = MagicMock()
     mock_bm25.search.return_value = bm25_hits
@@ -91,14 +92,18 @@ async def test_rag_pipeline_uses_retrieved_context():
 @pytest.mark.asyncio
 async def test_rag_pipeline_traces_retrieval_and_generation():
     """Pipeline must open spans via the injected tracer on every run."""
+
     async def fake_stream(messages, system=None):
         yield "ok"
 
     trace_names: list[str] = []
 
     class _RecordingSpan:
-        def set_output(self, output): pass
-        def set_metadata(self, metadata): pass
+        def set_output(self, output):
+            pass
+
+        def set_metadata(self, metadata):
+            pass
 
     class _RecordingTracer:
         enabled = True
@@ -195,6 +200,7 @@ async def test_rag_pipeline_uses_configured_top_k(monkeypatch):
         game_slug="hades",
         game_display_name="Hades",
         retrieve_top_k=3,
+        rerank_candidates=4,
         final_top_k=2,
     )
 
@@ -207,11 +213,8 @@ async def test_rag_pipeline_uses_configured_top_k(monkeypatch):
     mock_dense.search.assert_awaited_once()
     assert mock_dense.search.await_args.kwargs["top_k"] == 3
     assert mock_dense.search.await_args.kwargs["embedding_backend"] == "local"
-    assert (
-        mock_dense.search.await_args.kwargs["embedding_model"]
-        == "BAAI/bge-base-en-v1.5"
-    )
-    assert fused_top_ks == [2]
+    assert mock_dense.search.await_args.kwargs["embedding_model"] == "BAAI/bge-base-en-v1.5"
+    assert fused_top_ks == [4]
 
 
 @pytest.mark.asyncio
@@ -234,3 +237,650 @@ async def test_rag_pipeline_answer_returns_answer_and_passages():
 
     assert response.answer == "Nyx is the Goddess of Night. [1]"
     assert response.passages[0]["passage_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_pipeline_applies_reranker_before_prompt(monkeypatch):
+    """After rrf_fuse, the reranker reorders candidates and final_top_k is
+    taken from the reranked list."""
+    import app.rag.pipeline as pipeline_module
+    from app.rag.pipeline import RAGPipeline
+    from app.retrieval.hybrid import HybridHit
+    from app.retrieval.reranker import RerankedHit
+
+    fused = [
+        HybridHit(passage_id=1, rrf_score=0.9, content="A", source_url="u1"),
+        HybridHit(passage_id=2, rrf_score=0.8, content="B", source_url="u2"),
+        HybridHit(passage_id=3, rrf_score=0.7, content="C", source_url="u3"),
+    ]
+    monkeypatch.setattr(pipeline_module, "rrf_fuse", lambda **kw: fused)
+
+    class _FakeReranker:
+        async def rerank(self, query, hits, top_k):
+            return [
+                RerankedHit(
+                    passage_id=h.passage_id,
+                    rerank_score=-h.rrf_score,
+                    content=h.content,
+                    source_url=h.source_url,
+                )
+                for h in list(reversed(hits))[:top_k]
+            ]
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.0] * 768 for _ in texts]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, q, top_k, max_spoiler_tier):
+            return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=object(),
+        game_slug="hades",
+        game_display_name="Hades",
+        reranker=_FakeReranker(),
+        retrieve_top_k=10,
+        rerank_candidates=10,
+        final_top_k=2,
+    )
+
+    passages, _ = await p._retrieve_with_scores(session=None, question="q", max_spoiler_tier=0)
+    assert [h["passage_id"] for h in passages] == [3, 2]
+
+
+@pytest.mark.asyncio
+async def test_answer_returns_cached_response_without_calling_llm(monkeypatch):
+    from app.rag.pipeline import RAGPipeline
+    from app.rag.semantic_cache import CachedAnswer
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.2] * 768]
+
+    class _Dense:
+        async def search(self, **kw):
+            raise AssertionError("retrieval must not run on cache hit")
+
+    class _BM25:
+        def search(self, *a, **kw):
+            raise AssertionError("retrieval must not run on cache hit")
+
+    class _LLM:
+        model_name = "fake"
+
+        async def complete(self, *a, **kw):
+            raise AssertionError("LLM must not be called on cache hit")
+
+    class _Cache:
+        async def get(self, **kw):
+            assert kw["max_spoiler_tier"] == 0
+            assert kw["embedding_backend"] == "local"
+            assert kw["embedding_model"] == "bge-base"
+            return CachedAnswer(
+                answer="cached",
+                passages=[{"passage_id": 1, "content": "p", "source_url": "u"}],
+                citations=[{"index": 1, "source_url": "u", "title": "t"}],
+                similarity=0.99,
+            )
+
+        async def put(self, **kw):
+            raise AssertionError("put must not run on cache hit")
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        semantic_cache=_Cache(),
+        corpus_revision_fn=lambda session, slug: "10:100",
+    )
+
+    response = await p.answer(session=None, question="q", max_spoiler_tier=0)
+    assert response.answer == "cached"
+    assert response.passages[0]["passage_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_answer_returns_refusal_when_verifier_rejects(monkeypatch):
+    from app.rag.pipeline import RAGPipeline
+    from app.rag.verifier import VerifierVerdict
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.1] * 768 for _ in texts]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, *a, **kw):
+            return []
+
+    class _LLM:
+        model_name = "fake"
+
+        async def complete(self, *a, **kw):
+            return "Zeus has a secret third brother."
+
+    class _Verifier:
+        async def verify(self, *, question, answer, passages):
+            return VerifierVerdict(
+                is_faithful=False,
+                has_sufficient_evidence=False,
+                unsupported_claims=["Zeus has a secret third brother."],
+                rewrite_suggestions=["Ask about Zeus's canonical siblings."],
+            )
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        verifier=_Verifier(),
+    )
+
+    async def fake_retrieve(*args, **kwargs):
+        return [{"passage_id": 1, "content": "Zeus …", "source_url": "u"}], []
+
+    monkeypatch.setattr(p, "_retrieve_with_scores", fake_retrieve)
+
+    response = await p.answer(session=None, question="who?", max_spoiler_tier=0)
+    assert response.status == "insufficient_evidence"
+    assert response.refusal is not None
+    assert response.refusal.rewrite_suggestions == ["Ask about Zeus's canonical siblings."]
+
+
+@pytest.mark.asyncio
+async def test_answer_runs_tool_loop_and_returns_final_text(monkeypatch):
+    from app.llm.tools import ToolDefinition
+    from app.rag.pipeline import RAGPipeline
+
+    class _LLM:
+        model_name = "fake"
+        calls = []
+
+        async def complete_with_tools(self, messages, tools):
+            self.calls.append(list(messages))
+            if len(self.calls) == 1:
+                return None, [{"name": "entity_lookup", "arguments": {"slug": "zag"}}]
+            return "Based on the tool output, Zagreus is the Prince of the Underworld [1].", []
+
+        async def complete(self, messages, system=None):
+            raise AssertionError("plain complete must not be called when tools succeed")
+
+    class _Dispatcher:
+        async def run(self, *, session, call):
+            return {"name": "Zagreus", "entity_type": "character"}
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.1] * 768]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, *a, **kw):
+            return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        tool_dispatcher=_Dispatcher(),
+        tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
+        tool_loop_max_iters=3,
+    )
+
+    async def fake_retrieve(*args, **kwargs):
+        return [{"passage_id": 1, "content": "Zagreus …", "source_url": "u"}], []
+
+    monkeypatch.setattr(p, "_retrieve_with_scores", fake_retrieve)
+    response = await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)
+    assert "Zagreus" in response.answer
+
+
+@pytest.mark.asyncio
+async def test_answer_raises_when_tools_enabled_but_provider_lacks_tool_support():
+    from app.llm.tools import ToolDefinition
+    from app.rag.pipeline import RAGPipeline
+
+    class _LLM:
+        model_name = "fake-plain"
+
+        async def complete(self, messages, system=None):
+            return "plain answer"
+
+    class _Dispatcher:
+        async def run(self, *, session, call):
+            raise AssertionError("dispatcher must not run when provider lacks tool support")
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.1] * 768]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, *a, **kw):
+            return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        tool_dispatcher=_Dispatcher(),
+        tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
+        tool_loop_max_iters=3,
+    )
+    with pytest.raises(RuntimeError, match="complete_with_tools support"):
+        await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)
+
+
+def test_answer_template_includes_selection_step():
+    from pathlib import Path
+
+    from jinja2 import Environment, FileSystemLoader
+
+    env = Environment(loader=FileSystemLoader(str(Path("app/rag/prompts"))), autoescape=False)
+    template = env.get_template("answer.j2")
+    rendered = template.render(
+        game_display_name="Hades",
+        passages=[{"source_url": "http://x.com", "content": "Zeus is the Olympian god."}],
+        question="Who is Zeus?",
+    )
+    assert "identify which" in rendered.lower() or "cite only" in rendered.lower()
+    assert "do not cite" in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_uses_complete_json_when_structured_output_enabled(
+    mock_session,
+):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.rag.pipeline import RAGPipeline
+    from app.rag.structured_output import AnswerWithUsedPassages
+
+    mock_llm = AsyncMock()
+    mock_llm.model_name = "test-model"
+    mock_structured = AnswerWithUsedPassages(answer="The answer.", used_passages=[1])
+    mock_llm.complete_json = AsyncMock(return_value=mock_structured)
+
+    mock_embedder = AsyncMock()
+    mock_embedder.embed = AsyncMock(return_value=[[0.1] * 5])
+    mock_embedder.embed_queries = AsyncMock(return_value=[[0.1] * 5])
+    mock_embedder.backend_name = "test"
+    mock_embedder.model_name = "test-model"
+
+    mock_bm25 = MagicMock()
+    mock_bm25.search = MagicMock(return_value=[])
+
+    mock_dense = AsyncMock()
+    mock_dense.search = AsyncMock(return_value=[])
+
+    pipeline = RAGPipeline(
+        embedder=mock_embedder,
+        bm25_index=mock_bm25,
+        dense_retriever=mock_dense,
+        llm=mock_llm,
+        game_slug="hades",
+        game_display_name="Hades",
+        answer_structured_output=True,
+    )
+    result = await pipeline.answer(
+        session=mock_session,
+        question="What is the Mirror of Night?",
+        max_spoiler_tier=3,
+    )
+    mock_llm.complete_json.assert_called_once()
+    assert result.answer  # not empty
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_uses_structured_function_call_messages(monkeypatch):
+    """After a tool call round, messages must use model_tool_call / tool_results
+    roles — not freeform user text — so Gemini gets the correct conversation structure."""
+    from app.llm.tools import ToolDefinition
+    from app.rag.pipeline import RAGPipeline
+
+    captured_second_messages: list[dict] = []
+
+    class _LLM:
+        model_name = "fake"
+        _call = 0
+
+        async def complete_with_tools(self, messages, tools):
+            self._call += 1
+            if self._call == 1:
+                return None, [{"name": "entity_lookup", "arguments": {"slug": "zag"}}]
+            captured_second_messages.extend(messages)
+            return "Answer [1].", []
+
+        async def complete(self, messages, system=None):
+            raise AssertionError("plain complete must not be called")
+
+    class _Dispatcher:
+        async def run(self, *, session, call):
+            return {"name": "Zagreus"}
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.1] * 768]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, *a, **kw):
+            return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        tool_dispatcher=_Dispatcher(),
+        tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
+        tool_loop_max_iters=3,
+    )
+
+    async def _fake_retrieve(*a, **kw):
+        return [{"passage_id": 1, "content": "c", "source_url": "u"}], []
+
+    monkeypatch.setattr(p, "_retrieve_with_scores", _fake_retrieve)
+    await p.answer(session=None, question="who is zag?", max_spoiler_tier=0)
+
+    roles = [m["role"] for m in captured_second_messages]
+    assert "model_tool_call" in roles, "model function_call turn missing from second call messages"
+    assert "tool_results" in roles, "tool_results turn missing from second call messages"
+    # Must NOT use freeform user-text tool results
+    user_msgs = [m for m in captured_second_messages if m["role"] == "user"]
+    for m in user_msgs:
+        assert "Tool " not in m.get("content", ""), (
+            "tool result must not be sent as freeform user text"
+        )
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_short_circuits_before_llm():
+    """When relevance_gate_threshold is set and all rerank scores are below it,
+    answer() must return status='insufficient_evidence' without calling llm.complete."""
+    from unittest.mock import AsyncMock
+
+    from app.rag.pipeline import RAGPipeline
+    from app.retrieval.reranker import RerankedHit
+
+    class _LLM:
+        model_name = "fake"
+
+        async def complete(self, *a, **kw):
+            raise AssertionError("LLM must not be called when gate fires")
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.1] * 768 for _ in texts]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, *a, **kw):
+            return []
+
+    low_score = -5.0
+    threshold = 0.0
+
+    class _Reranker:
+        async def rerank(self, query, hits, top_k):
+            return [
+                RerankedHit(
+                    passage_id=1,
+                    rerank_score=low_score,
+                    content="some content",
+                    source_url="http://x.com",
+                )
+            ]
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        reranker=_Reranker(),
+        relevance_gate_threshold=threshold,
+    )
+
+    response = await p.answer(
+        session=AsyncMock(), question="who is the best pizza?", max_spoiler_tier=0
+    )
+    assert response.status == "insufficient_evidence"
+    assert response.answer  # refusal message is non-empty
+    assert response.refusal is not None
+
+
+@pytest.mark.asyncio
+async def test_retrieve_uses_embed_queries_when_available():
+    """_retrieve_with_scores calls embed_queries on the embedder when present."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.rag.pipeline import RAGPipeline
+
+    embed_queries_mock = AsyncMock(return_value=[[0.5] * 768])
+    embed_mock = AsyncMock(return_value=[[0.1] * 768])
+
+    mock_embedder = MagicMock()
+    mock_embedder.backend_name = "local"
+    mock_embedder.model_name = "BAAI/bge-base-en-v1.5:asym"
+    mock_embedder.embed = embed_mock
+    mock_embedder.embed_queries = embed_queries_mock
+
+    p = RAGPipeline(
+        embedder=mock_embedder,
+        bm25_index=MagicMock(search=MagicMock(return_value=[])),
+        dense_retriever=MagicMock(search=AsyncMock(return_value=[])),
+        llm=MagicMock(),
+        game_slug="hades",
+        game_display_name="Hades",
+    )
+
+    await p._retrieve_with_scores(
+        session=AsyncMock(), question="who is zagreus?", max_spoiler_tier=0
+    )
+
+    embed_queries_mock.assert_awaited_once_with(["who is zagreus?"])
+    embed_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_answer_uses_embed_queries_for_cache_embedding():
+    """answer() must call embed_queries (not embed) when computing the cache query embedding."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.rag.pipeline import RAGPipeline
+    from app.rag.semantic_cache import CachedAnswer
+
+    embed_queries_mock = AsyncMock(return_value=[[0.5] * 768])
+    embed_mock = AsyncMock(return_value=[[0.1] * 768])
+
+    mock_embedder = MagicMock()
+    mock_embedder.backend_name = "local"
+    mock_embedder.model_name = "BAAI/bge-base-en-v1.5:asym"
+    mock_embedder.embed = embed_mock
+    mock_embedder.embed_queries = embed_queries_mock
+
+    class _Cache:
+        async def get(self, **kw):
+            return CachedAnswer(
+                answer="cached",
+                passages=[],
+                citations=[],
+                similarity=0.99,
+            )
+
+        async def put(self, **kw):
+            pass
+
+    p = RAGPipeline(
+        embedder=mock_embedder,
+        bm25_index=MagicMock(search=MagicMock(return_value=[])),
+        dense_retriever=MagicMock(search=AsyncMock(return_value=[])),
+        llm=MagicMock(),
+        game_slug="hades",
+        game_display_name="Hades",
+        semantic_cache=_Cache(),
+        corpus_revision_fn=lambda session, slug: "rev1",
+    )
+
+    await p.answer(session=AsyncMock(), question="who is nyx?", max_spoiler_tier=0)
+
+    embed_queries_mock.assert_awaited_once_with(["who is nyx?"])
+    embed_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_emits_per_iteration_span(monkeypatch):
+    """_run_tool_loop must open a 'rag.tool_loop.iter' span for each iteration."""
+    from app.llm.tools import ToolDefinition
+    from app.rag.pipeline import RAGPipeline
+
+    iter_spans: list[dict] = []
+
+    class _RecordingSpan:
+        def __init__(self, name, metadata):
+            self.name = name
+            self.metadata = dict(metadata or {})
+            self.output = None
+            self.extra_meta = {}
+            iter_spans.append(self)
+
+        def set_output(self, output):
+            self.output = output
+
+        def set_metadata(self, meta):
+            self.extra_meta.update(meta)
+
+    class _RecordingTracer:
+        enabled = True
+
+        def trace(self, name, metadata=None, **kwargs):
+            from contextlib import contextmanager
+
+            span = _RecordingSpan(name, metadata)
+
+            @contextmanager
+            def _cm():
+                yield span
+
+            return _cm()
+
+    class _LLM:
+        model_name = "fake"
+        call_count = 0
+
+        async def complete_with_tools(self, messages, tools):
+            self.call_count += 1
+            if self.call_count == 1:
+                return None, [{"name": "entity_lookup", "arguments": {"slug": "zag"}}]
+            return "Final answer.", []
+
+        async def complete(self, messages, system=None):
+            return "fallback"
+
+    class _Dispatcher:
+        async def run(self, *, session, call):
+            return {"name": "Zagreus"}
+
+    class _Embedder:
+        backend_name = "local"
+        model_name = "bge-base"
+
+        async def embed(self, texts):
+            return [[0.1] * 768]
+
+    class _Dense:
+        async def search(self, **kw):
+            return []
+
+    class _BM25:
+        def search(self, *a, **kw):
+            return []
+
+    p = RAGPipeline(
+        embedder=_Embedder(),
+        bm25_index=_BM25(),
+        dense_retriever=_Dense(),
+        llm=_LLM(),
+        game_slug="hades",
+        game_display_name="Hades",
+        tracer=_RecordingTracer(),
+        tool_dispatcher=_Dispatcher(),
+        tool_definitions=[ToolDefinition(name="entity_lookup", description="", parameters={})],
+        tool_loop_max_iters=3,
+    )
+
+    async def fake_retrieve(*args, **kwargs):
+        return [{"passage_id": 1, "content": "ctx", "source_url": "u"}], []
+
+    monkeypatch.setattr(p, "_retrieve_with_scores", fake_retrieve)
+    await p.answer(session=None, question="who is zagreus?", max_spoiler_tier=0)
+
+    tool_loop_spans = [s for s in iter_spans if s.name == "rag.tool_loop.iter"]
+    assert len(tool_loop_spans) == 2, (
+        f"Expected 2 tool_loop.iter spans (one per iteration), got {len(tool_loop_spans)}"
+    )
+    assert tool_loop_spans[0].metadata.get("iter") == 0
+    assert tool_loop_spans[1].metadata.get("iter") == 1
+    # First iteration emitted tool calls
+    assert tool_loop_spans[0].extra_meta.get("tool_calls") == ["entity_lookup"]
+    # Second iteration returned text
+    assert tool_loop_spans[1].output == "Final answer."

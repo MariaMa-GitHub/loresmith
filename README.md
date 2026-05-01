@@ -10,10 +10,15 @@ A free-to-use, open-source RAG (Retrieval-Augmented Generation) platform for vid
 
 - **Hybrid retrieval** — BM25 + dense vector search (pgvector) fused via Reciprocal Rank Fusion
 - **Multi-turn chat** — follow-up questions are rewritten into standalone queries before retrieval
-- **Spoiler control** — passages are tagged tier 0–3 at ingestion; retrieval enforces a configurable max tier per request
+- **Spoiler control** — passages are tagged tier 0–3 at ingestion; currently hardcoded to endgame tier (all content visible)
 - **Streaming answers** — server-sent events with inline `[N]` citations linked to source passages
 - **Multi-game** — pluggable `GameAdapter` interface; currently supports Hades and Hades II
-- **Eval harness** — CLI runner with JSON report output over 150 hand-labeled questions across four strata (factual, multi-hop, ambiguous, adversarial)
+- **Cross-encoder reranker** — BGE-based cross-encoder re-scores the top retrieval candidates before generation
+- **Semantic cache** — cosine-similarity cache scoped to `(game_slug, corpus_revision)`; hits bypass the full RAG pipeline on non-streaming requests; auto-invalidates on re-ingest
+- **Verifier + refusal** — post-generation faithfulness check; insufficient-evidence answers are replaced with a structured refusal card rather than surfaced verbatim
+- **Typed tool use** — `entity_lookup` and `list_entities_by_type` tools let the LLM fetch structured entity data via a bounded tool loop (≤ 3 iterations) on the non-streaming path
+- **Ablation harness** — 10-configuration matrix (baseline → full-no-tools + two hybrid ablations) with per-row faithfulness, recall@5, citation validity, and latency metrics; see `docs/EVAL_REPORT.md`
+- **Eval harness** — CLI runner with JSON report output over 200 hand-labeled Hades questions + 50 Hades II questions across four strata (factual, multi-hop, ambiguous, adversarial)
 
 ---
 
@@ -109,7 +114,7 @@ backend/
     retrieval/    bm25, dense, hybrid (RRF)
     rag/          query rewriter, pipeline, Jinja prompts
     llm/          LLMProvider protocol + Gemini / Ollama adapters
-    eval/         labeled dataset (datasets/hades.jsonl, 150 questions)
+    eval/         labeled datasets (hades.jsonl 200q, hades2.jsonl 50q) + ablation harness
     db/           SQLAlchemy models, session factory, Alembic migrations
     tracing/      Langfuse wrapper
     main.py       FastAPI entrypoint
@@ -117,7 +122,7 @@ backend/
 frontend/
   src/
     app/          game picker + chat pages
-    components/   GamePicker, ChatView, MessageBubble, HistorySidebar
+    components/   GamePicker, ChatView, MessageBubble, HistorySidebar, InsufficientEvidenceCard
     lib/api.ts    fetch helpers + SSE reader
 ```
 

@@ -1,5 +1,9 @@
 import hashlib
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.ingestion.section_extractor import SectionRecord
 
 
 @dataclass
@@ -55,4 +59,46 @@ class Chunker:
                 break
             start += step
 
+        return chunks
+
+    def chunk_sections(
+        self,
+        records: list["SectionRecord"],
+        title: str,
+        source_url: str,
+    ) -> list[Chunk]:
+        """Chunk a list of SectionRecords into Chunk objects.
+
+        Short sections (≤ chunk_size words) become a single chunk. Oversized
+        sections fall back to the same word-window approach as ``chunk()``.
+        """
+        chunks: list[Chunk] = []
+        for record in records:
+            section_label = " > ".join(record.section_path) if record.section_path else ""
+            prefix = (
+                f"{title.strip()}\n{section_label}\n\n" if section_label else f"{title.strip()}\n\n"
+            )
+            words = record.text.split()
+            if not words:
+                continue
+            if len(words) <= self._chunk_size:
+                chunks.append(
+                    Chunk(
+                        content=f"{prefix}{record.text}",
+                        source_url=source_url,
+                        title=title,
+                    )
+                )
+            else:
+                step = self._chunk_size - self._overlap
+                start = 0
+                while start < len(words):
+                    end = min(start + self._chunk_size, len(words))
+                    window = " ".join(words[start:end])
+                    chunks.append(
+                        Chunk(content=f"{prefix}{window}", source_url=source_url, title=title)
+                    )
+                    if end == len(words):
+                        break
+                    start += step
         return chunks

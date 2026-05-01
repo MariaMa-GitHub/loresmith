@@ -10,6 +10,7 @@ from app.db.models import Base, EvalRun, Passage
 from app.db.session import get_engine, get_session_factory
 from app.eval.runner import run_pipeline_eval
 from app.llm.base import TaskType
+from app.retrieval.reranker import NullReranker
 from app.tracing.langfuse import noop_tracer
 
 
@@ -117,11 +118,14 @@ async def test_run_pipeline_eval_smoke(monkeypatch, tmp_path):
         settings=SimpleNamespace(
             retrieval_top_k_per_method=5,
             retrieval_top_k_final=5,
+            rerank_candidates=20,
         ),
         tracer=noop_tracer(),
         embedder=_FakeEmbedder(),
         dense=_FakeDenseRetriever(),
         router=_FakeRouter(),
+        reranker=NullReranker(),
+        semantic_cache=None,
     )
     monkeypatch.setattr("app.eval.runner.build_services", lambda: fake_services)
 

@@ -3,7 +3,7 @@ from app.llm.base import LLMProvider, TaskType
 from app.llm.gemini import GeminiProvider
 from app.llm.ollama import OllamaProvider
 
-_STRONG_TASKS = {TaskType.ANSWER}
+_STRONG_TASKS = {TaskType.ANSWER, TaskType.JUDGE}
 
 
 class LLMRouter:
@@ -26,10 +26,15 @@ def _build_gemini_pair(settings: Settings) -> tuple[LLMProvider, LLMProvider]:
             "llm_backend=gemini requires GEMINI_API_KEY to be set."
         )
     return (
-        GeminiProvider(api_key=settings.gemini_api_key),
         GeminiProvider(
             api_key=settings.gemini_api_key,
-            model_name="gemini-2.5-flash-lite",
+            model_name=settings.gemini_strong_model,
+            min_call_interval=settings.gemini_min_call_interval,
+        ),
+        GeminiProvider(
+            api_key=settings.gemini_api_key,
+            model_name=settings.gemini_fast_model,
+            min_call_interval=settings.gemini_min_call_interval,
         ),
     )
 

@@ -51,10 +51,13 @@ class GeminiEmbedder:
     Optional backend — requires a Google AI Studio API key and counts against
     Gemini free-tier RPM quotas. Loresmith defaults to LocalEmbedder; set
     EMBEDDING_BACKEND=gemini to switch to this one.
+
+    `model_name` carries an `:asym` suffix as the DB identity string to signal
+    asymmetric encoding; actual API calls use `_MODEL` (no suffix).
     """
 
     backend_name = "gemini"
-    model_name = _MODEL
+    model_name = _MODEL + ":asym"
 
     def __init__(
         self,
@@ -65,44 +68,64 @@ class GeminiEmbedder:
         self._client = genai.Client(api_key=api_key)
         self._inter_batch_delay = inter_batch_delay_seconds
 
-    async def _embed_batch_once(self, texts: list[str]) -> list[list[float]]:
+    async def _embed_batch_once(
+        self, texts: list[str], task_type: str | None = None
+    ) -> list[list[float]]:
         result = await self._client.aio.models.embed_content(
             model=_MODEL,
             contents=texts,
-            config=types.EmbedContentConfig(output_dimensionality=_OUTPUT_DIM),
+            config=types.EmbedContentConfig(
+                output_dimensionality=_OUTPUT_DIM,
+                task_type=task_type,
+            ),
         )
         return [_l2_normalize(list(e.values)) for e in result.embeddings]
 
-    async def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+    async def _embed_batch(
+        self, texts: list[str], task_type: str | None = None
+    ) -> list[list[float]]:
         last_exc: BaseException | None = None
         for attempt in range(_MAX_RETRY_ATTEMPTS):
             try:
-                return await self._embed_batch_once(texts)
+                return await self._embed_batch_once(texts, task_type=task_type)
             except Exception as exc:
                 if not _is_transient(exc) or attempt == _MAX_RETRY_ATTEMPTS - 1:
                     raise
                 last_exc = exc
-                backoff = min(_RETRY_MAX_SECONDS, _RETRY_BASE_SECONDS * (2 ** attempt))
+                backoff = min(_RETRY_MAX_SECONDS, _RETRY_BASE_SECONDS * (2**attempt))
                 jitter = random.uniform(0, 1)
                 wait = backoff + jitter
                 logger.warning(
                     "Embedding batch rate-limited (attempt %d/%d); sleeping %.1fs",
-                    attempt + 1, _MAX_RETRY_ATTEMPTS, wait,
+                    attempt + 1,
+                    _MAX_RETRY_ATTEMPTS,
+                    wait,
                 )
                 await asyncio.sleep(wait)
         assert last_exc is not None  # pragma: no cover — unreachable
         raise last_exc
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Embed a list of texts. Returns one 768-dim unit-norm vector per text."""
+    async def _embed_all(
+        self, texts: list[str], task_type: str | None = None
+    ) -> list[list[float]]:
         if not texts:
             return []
-
         all_embeddings: list[list[float]] = []
         for i in range(0, len(texts), _BATCH_SIZE):
             batch = texts[i : i + _BATCH_SIZE]
-            all_embeddings.extend(await self._embed_batch(batch))
+            all_embeddings.extend(await self._embed_batch(batch, task_type=task_type))
             if i + _BATCH_SIZE < len(texts) and self._inter_batch_delay > 0:
                 await asyncio.sleep(self._inter_batch_delay)
-
         return all_embeddings
+
+    async def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts with RETRIEVAL_QUERY task type."""
+        return await self._embed_all(texts, task_type="RETRIEVAL_QUERY")
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Embed document/passage texts with RETRIEVAL_DOCUMENT task type."""
+        return await self._embed_all(texts, task_type="RETRIEVAL_DOCUMENT")
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Deprecated alias for embed_documents. Prefer embed_documents for new code."""
+        return await self.embed_documents(texts)

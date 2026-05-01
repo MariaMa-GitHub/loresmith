@@ -2,6 +2,7 @@ import json
 from collections.abc import AsyncIterator
 
 import httpx
+from pydantic import BaseModel
 
 
 class OllamaProvider:
@@ -36,6 +37,53 @@ class OllamaProvider:
             response = await client.post(f"{self._base_url}/api/chat", json=payload)
             response.raise_for_status()
             return response.json()["message"]["content"]
+
+    async def complete_json(
+        self,
+        messages: list[dict],
+        schema: type[BaseModel],
+        system: str | None = None,
+    ) -> BaseModel:
+        payload = {
+            "model": self.model_name,
+            "messages": self._build_messages(messages, system),
+            "stream": False,
+            "format": schema.model_json_schema(),
+        }
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(f"{self._base_url}/api/chat", json=payload)
+            response.raise_for_status()
+            content = response.json()["message"]["content"]
+        return schema.model_validate_json(content)
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        system: str | None = None,
+    ) -> tuple[str | None, list[dict]]:
+        payload = {
+            "model": self.model_name,
+            "messages": self._build_messages(messages, system),
+            "tools": tools,
+            "stream": False,
+        }
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(f"{self._base_url}/api/chat", json=payload)
+            response.raise_for_status()
+            msg = response.json()["message"]
+        tool_calls = msg.get("tool_calls") or []
+        if tool_calls:
+            parsed = []
+            for call in tool_calls:
+                fn = call.get("function") or {}
+                name = fn.get("name")
+                if not name:
+                    continue
+                parsed.append({"name": name, "arguments": fn.get("arguments") or {}})
+            if parsed:
+                return (None, parsed)
+        return (msg.get("content"), [])
 
     async def stream(
         self,

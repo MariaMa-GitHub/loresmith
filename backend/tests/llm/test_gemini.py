@@ -87,3 +87,89 @@ async def test_gemini_stream_yields_chunks():
             chunks.append(chunk)
 
     assert chunks == ["chunk1", " chunk2"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_complete_json_validates_response():
+    from pydantic import BaseModel, ConfigDict
+
+    class _Schema(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        is_faithful: bool
+        has_sufficient_evidence: bool
+
+    mock_response = MagicMock()
+    mock_response.text = '{"is_faithful": true, "has_sufficient_evidence": false}'
+
+    with patch("app.llm.gemini.genai.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        provider = GeminiProvider(api_key="test")
+        result = await provider.complete_json(
+            [{"role": "user", "content": "judge this"}],
+            schema=_Schema,
+            system="be strict",
+        )
+
+    assert isinstance(result, _Schema)
+    assert result.is_faithful is True
+    assert result.has_sufficient_evidence is False
+
+
+def test_to_gemini_contents_handles_model_tool_call():
+    from app.llm.gemini import _to_gemini_contents
+
+    messages = [
+        {
+            "role": "model_tool_call",
+            "calls": [{"name": "entity_lookup", "arguments": {"slug": "zag"}}],
+        }
+    ]
+    contents = _to_gemini_contents(messages)
+    assert len(contents) == 1
+    assert contents[0]["role"] == "model"
+    fc = contents[0]["parts"][0]["function_call"]
+    assert fc["name"] == "entity_lookup"
+    assert fc["args"] == {"slug": "zag"}
+
+
+def test_to_gemini_contents_handles_tool_results():
+    from app.llm.gemini import _to_gemini_contents
+
+    messages = [
+        {
+            "role": "tool_results",
+            "results": [{"name": "entity_lookup", "result": {"slug": "zag", "name": "Zagreus"}}],
+        }
+    ]
+    contents = _to_gemini_contents(messages)
+    assert len(contents) == 1
+    assert contents[0]["role"] == "user"
+    fr = contents[0]["parts"][0]["function_response"]
+    assert fr["name"] == "entity_lookup"
+    assert fr["response"] == {"slug": "zag", "name": "Zagreus"}
+
+
+def test_to_gemini_contents_full_tool_conversation():
+    from app.llm.gemini import _to_gemini_contents
+
+    messages = [
+        {"role": "user", "content": "Who is Zagreus?"},
+        {
+            "role": "model_tool_call",
+            "calls": [{"name": "entity_lookup", "arguments": {"slug": "zagreus"}}],
+        },
+        {
+            "role": "tool_results",
+            "results": [{"name": "entity_lookup", "result": {"name": "Zagreus"}}],
+        },
+    ]
+    contents = _to_gemini_contents(messages)
+    assert len(contents) == 3
+    assert contents[0]["role"] == "user"
+    assert contents[1]["role"] == "model"
+    assert contents[2]["role"] == "user"
+    assert "function_call" in contents[1]["parts"][0]
+    assert "function_response" in contents[2]["parts"][0]

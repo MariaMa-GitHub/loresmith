@@ -14,12 +14,38 @@ class Settings(BaseSettings):
     # LLM
     gemini_api_key: str = ""
     llm_backend: str = "gemini"  # gemini | ollama | auto
+    gemini_strong_model: str = "gemini-2.5-flash"
+    gemini_fast_model: str = "gemini-2.5-flash-lite"
+    gemini_min_call_interval: float = 0.0  # seconds between API calls; >0 to stay under RPM limits
 
     # Embeddings
     embedding_backend: str = "local"  # local | gemini
     local_embedding_model: str = "BAAI/bge-base-en-v1.5"  # 768d, matches EMBEDDING_DIM
-    retrieval_top_k_per_method: int = Field(default=10, ge=1)
+    retrieval_top_k_per_method: int = Field(default=20, ge=1)
     retrieval_top_k_final: int = Field(default=5, ge=1)
+
+    # Reranker
+    reranker_enabled: bool = True
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_candidates: int = Field(default=50, ge=1)
+    rerank_score_floor: float | None = None
+    relevance_gate_threshold: float | None = None
+
+    # Semantic cache
+    semantic_cache_enabled: bool = True
+    semantic_cache_threshold: float = Field(default=0.92, ge=0.0, le=1.0)
+    semantic_cache_lookup_limit: int = Field(default=3, ge=1)
+
+    # Verifier
+    verifier_enabled: bool = True
+    verifier_model_tier: Literal["strong", "fast"] = "strong"
+
+    # Structured output
+    answer_structured_output: bool = False
+
+    # Tool use
+    tools_enabled: bool = True
+    tool_loop_max_iters: int = Field(default=3, ge=1, le=8)
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
@@ -37,6 +63,9 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "https://loresmith.vercel.app",
     ]
+
+    # Ingestion
+    chunker_strategy: Literal["fixed", "section_aware"] = "fixed"
 
     # Security
     ingest_token: str = "change-me"

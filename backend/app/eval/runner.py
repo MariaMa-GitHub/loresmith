@@ -11,6 +11,13 @@ from time import perf_counter
 
 from app.db.models import EvalRun
 from app.db.session import get_session_factory
+from app.eval.citation_metrics import (
+    CitationScore,
+    per_item_citation_scores,
+)
+from app.eval.citation_metrics import (
+    aggregate as aggregate_citation_scores,
+)
 from app.eval.judge import AnswerJudgment, judge_answer
 from app.eval.metrics import (
     exact_match,
@@ -20,12 +27,13 @@ from app.eval.metrics import (
 )
 from app.eval.report import build_report, default_report_path, write_report
 from app.eval.source_identity import resolve_source_identities, resolve_source_identity
+from app.eval.stratum_metrics import aggregate_by_stratum
 from app.games import GAME_DISPLAY
 from app.llm.base import TaskType
 from app.rag.citations import normalize_answer_citations, parse_inline_citation_indices
 from app.rag.pipeline import RAGPipeline, RAGResponse
 from app.rag.rewriter import QueryRewriter
-from app.services import build_bm25, build_services
+from app.services import build_bm25, build_services, resolve_corpus_revision_key
 
 _DATASETS_DIR = Path(__file__).parent / "datasets"
 _DEFAULT_DATASETS = {
@@ -79,7 +87,9 @@ async def run_eval(
 ) -> dict:
     results: list[dict] = []
 
-    for example in examples:
+    total = len(examples)
+    for idx, example in enumerate(examples, 1):
+        print(f"[{run_name}] {idx}/{total} {example.id}", flush=True)
         started = perf_counter()
         response = await answer_fn(example)
         normalized = normalize_answer_citations(
@@ -93,13 +103,9 @@ async def run_eval(
             citations=normalized.citations,
         )
         latency_ms = round((perf_counter() - started) * 1000, 2)
-        context_text = "\n".join(
-            passage["content"] for passage in normalized_response.passages
-        )
+        context_text = "\n".join(passage["content"] for passage in normalized_response.passages)
         cited_indices = parse_inline_citation_indices(normalized_response.answer)
-        retrieved_source_urls = [
-            passage["source_url"] for passage in normalized_response.passages
-        ]
+        retrieved_source_urls = [passage["source_url"] for passage in normalized_response.passages]
         gold_source_urls = sorted(set(example.gold_source_urls))
         gold_source_identities = resolve_source_identities(game_slug, gold_source_urls)
         retrieved_source_ids = [
@@ -133,9 +139,7 @@ async def run_eval(
                     normalized_response.citations
                 )
             if citation_validity_exact_url:
-                cited_urls = {
-                    citation["source_url"] for citation in normalized_response.citations
-                }
+                cited_urls = {citation["source_url"] for citation in normalized_response.citations}
                 citation_validity_exact_url = cited_urls.issubset(set(gold_source_urls))
 
         citation_validity: bool | None = None
@@ -160,11 +164,22 @@ async def run_eval(
                     set(gold_source_identities.resolved_ids)
                 )
 
-        judgment = (
-            await judge_fn(example, normalized_response)
-            if judge_fn
-            else None
-        )
+        citation_score: CitationScore | None = None
+        if gold_source_urls and not gold_source_identities.unresolved_urls:
+            all_cited_ids = [
+                source_id
+                for citation in normalized_response.citations
+                if (source_id := resolve_source_identity(game_slug, citation["source_url"]))
+                is not None
+            ]
+            citation_score = per_item_citation_scores(
+                cited=set(all_cited_ids),
+                gold=set(gold_source_identities.resolved_ids),
+            )
+
+        judgment = await judge_fn(example, normalized_response) if judge_fn else None
+        verifier_verdict = response.verifier_verdict
+        verifier_abstained = verifier_verdict.abstained if verifier_verdict is not None else None
 
         results.append(
             {
@@ -182,6 +197,12 @@ async def run_eval(
                 "retrieval_recall_at_5_exact_url": retrieval_recall_at_5_exact_url,
                 "citation_validity": citation_validity,
                 "citation_validity_exact_url": citation_validity_exact_url,
+                "citation_precision": citation_score.precision if citation_score else None,
+                "citation_recall": citation_score.recall if citation_score else None,
+                "citation_f1": citation_score.f1 if citation_score else None,
+                "citation_extraneous_count": (
+                    citation_score.extraneous_count if citation_score else None
+                ),
                 "exact_match": exact_match(
                     example.expected_answer,
                     normalized_response.answer,
@@ -197,6 +218,7 @@ async def run_eval(
                 "faithful": judgment.faithful if judgment else None,
                 "answer_correct": judgment.answer_correct if judgment else None,
                 "refusal_appropriate": judgment.refusal_appropriate if judgment else None,
+                "verifier_abstained": verifier_abstained,
                 "passages": normalized_response.passages,
                 "citations": normalized_response.citations,
             }
@@ -204,34 +226,41 @@ async def run_eval(
 
     size = len(results) or 1
     retrieval_values = [
-        value for item in results
-        if (value := item["retrieval_recall_at_5"]) is not None
+        value for item in results if (value := item["retrieval_recall_at_5"]) is not None
     ]
     exact_url_retrieval_values = [
-        value for item in results
-        if (value := item["retrieval_recall_at_5_exact_url"]) is not None
+        value for item in results if (value := item["retrieval_recall_at_5_exact_url"]) is not None
     ]
     citation_values = [
-        item["citation_validity"]
-        for item in results
-        if item["citation_validity"] is not None
+        item["citation_validity"] for item in results if item["citation_validity"] is not None
     ]
     exact_url_citation_values = [
         item["citation_validity_exact_url"]
         for item in results
         if item["citation_validity_exact_url"] is not None
     ]
-    faithfulness_values = [
-        item["faithful"] for item in results if item["faithful"] is not None
-    ]
+    faithfulness_values = [item["faithful"] for item in results if item["faithful"] is not None]
     correctness_values = [
         item["answer_correct"] for item in results if item["answer_correct"] is not None
     ]
     refusal_values = [
-        item["refusal_appropriate"]
-        for item in results
-        if item["refusal_appropriate"] is not None
+        item["refusal_appropriate"] for item in results if item["refusal_appropriate"] is not None
     ]
+    abstain_values = [
+        item["verifier_abstained"] for item in results if item.get("verifier_abstained") is not None
+    ]
+    citation_scores_list = [
+        CitationScore(
+            precision=item["citation_precision"],
+            recall=item["citation_recall"],
+            f1=item["citation_f1"],
+            extraneous_count=item["citation_extraneous_count"],
+        )
+        for item in results
+        if item["citation_precision"] is not None
+    ]
+    citation_f1_agg = aggregate_citation_scores(citation_scores_list)
+
     metrics = {
         "dataset_size": len(results),
         "annotated_retrieval_examples": len(retrieval_values),
@@ -255,19 +284,27 @@ async def run_eval(
         "retrieval_recall_at_5_exact_url_mean": _mean(exact_url_retrieval_values),
         "citation_validity_rate": _bool_rate(citation_values),
         "citation_validity_exact_url_rate": _bool_rate(exact_url_citation_values),
+        "citation_f1_mean": citation_f1_agg.get("f1_mean"),
+        "citation_precision_mean": citation_f1_agg.get("precision_mean"),
+        "citation_recall_mean": citation_f1_agg.get("recall_mean"),
+        "citation_extraneous_rate": citation_f1_agg.get("extraneous_rate"),
         "judged_examples": len(faithfulness_values),
         "faithfulness_rate": _bool_rate(faithfulness_values),
         "answer_correctness_rate": _bool_rate(correctness_values),
         "refusal_examples": len(refusal_values),
         "refusal_appropriateness_rate": _bool_rate(refusal_values),
+        "verifier_evaluated_examples": len(abstain_values),
+        "verifier_abstain_rate": _bool_rate(abstain_values),
     }
-    return build_report(
+    report = build_report(
         run_name=run_name,
         game_slug=game_slug,
         dataset_path=dataset_path,
         metrics=metrics,
         results=results,
     )
+    report["metrics_by_stratum"] = aggregate_by_stratum(results)
+    return report
 
 
 async def run_pipeline_eval(
@@ -304,7 +341,11 @@ async def run_pipeline_eval(
                     llm=services.router.for_task(TaskType.REWRITE),
                     tracer=services.tracer,
                 ),
+                reranker=services.reranker,
+                semantic_cache=services.semantic_cache,
+                corpus_revision_fn=resolve_corpus_revision_key,
                 retrieve_top_k=services.settings.retrieval_top_k_per_method,
+                rerank_candidates=services.settings.rerank_candidates,
                 final_top_k=services.settings.retrieval_top_k_final,
             )
             judge_llm = services.router.for_task(TaskType.VERIFY)
@@ -313,7 +354,7 @@ async def run_pipeline_eval(
                 return await pipeline.answer(
                     session=session,
                     question=example.question,
-                    max_spoiler_tier=example.spoiler_tier,
+                    max_spoiler_tier=3,
                     history=example.history,
                 )
 

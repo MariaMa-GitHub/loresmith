@@ -3,10 +3,14 @@ import hashlib
 import json
 import logging
 import urllib.robotparser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote, urlparse
+
+if TYPE_CHECKING:
+    from app.ingestion.section_extractor import SectionRecord
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -115,6 +119,7 @@ class ScrapedPage:
     text: str
     title: str
     fetched_at: datetime
+    sections: "list[SectionRecord] | None" = field(default=None)
 
 
 class Scraper:
@@ -245,7 +250,7 @@ class Scraper:
             return None
         if not parsed.path.startswith("/wiki/"):
             return None
-        page_title = parsed.path[len("/wiki/"):]
+        page_title = parsed.path[len("/wiki/") :]
         encoded = quote(unquote(page_title), safe="")
         api_url = (
             f"{parsed.scheme}://{parsed.netloc}/api.php"
@@ -254,8 +259,8 @@ class Scraper:
         )
         return api_url, unquote(page_title).replace("_", " ")
 
-    def _extract_text(self, html: str, url: str) -> tuple[str, str]:
-        """Return (title, cleaned_text) from raw HTML."""
+    def _extract_text(self, html: str, url: str) -> "tuple[str, str, list[SectionRecord] | None]":
+        """Return (title, cleaned_text, sections) from raw HTML."""
         parser = HTMLParser(html)
 
         # Extract title
@@ -275,18 +280,35 @@ class Scraper:
             or parser.css_first("body")
         )
         if not content_node:
-            return title, ""
+            return title, "", None
 
         # Remove navigation noise
-        for selector in [".toc", ".navbox", ".references", ".reflist",
-                         ".noprint", "script", "style", ".mw-editsection"]:
+        for selector in [
+            ".toc",
+            ".navbox",
+            ".references",
+            ".reflist",
+            ".noprint",
+            "script",
+            "style",
+            ".mw-editsection",
+        ]:
             for node in content_node.css(selector):
                 node.decompose()
 
         text = content_node.text(separator="\n", strip=True)
         # Collapse excessive blank lines
         lines = [line for line in text.splitlines() if line.strip()]
-        return title, "\n".join(lines)
+
+        try:
+            from app.ingestion.section_extractor import extract_sections
+
+            sections = extract_sections(html)
+        except Exception as exc:
+            logger.debug("section_extractor failed for %s: %s", url, exc)
+            sections = None
+
+        return title, "\n".join(lines), sections
 
     async def fetch(self, url: str) -> ScrapedPage | None:
         """Fetch a page, respecting robots.txt. Returns None if disallowed."""
@@ -296,8 +318,10 @@ class Scraper:
         # Try cache first
         cached_html = self._load_from_cache(url)
         if cached_html:
-            title, text = self._extract_text(cached_html, url)
-            return ScrapedPage(url=url, text=text, title=title, fetched_at=datetime.now(UTC))
+            title, text, sections = self._extract_text(cached_html, url)
+            return ScrapedPage(
+                url=url, text=text, title=title, fetched_at=datetime.now(UTC), sections=sections
+            )
 
         # Fetch with rate-limit delay
         if self._crawl_delay > 0:
@@ -337,7 +361,9 @@ class Scraper:
                 err = data["error"]
                 logger.warning(
                     "MediaWiki API error for %s: code=%s info=%r",
-                    url, err.get("code"), err.get("info"),
+                    url,
+                    err.get("code"),
+                    err.get("info"),
                 )
                 return None
             try:
@@ -350,7 +376,9 @@ class Scraper:
             html = body
 
         self._save_to_cache(url, html)
-        title, text = self._extract_text(html, url)
+        title, text, sections = self._extract_text(html, url)
         if not title and api_title:
             title = api_title
-        return ScrapedPage(url=url, text=text, title=title, fetched_at=datetime.now(UTC))
+        return ScrapedPage(
+            url=url, text=text, title=title, fetched_at=datetime.now(UTC), sections=sections
+        )
