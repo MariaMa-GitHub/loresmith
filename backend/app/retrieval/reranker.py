@@ -56,16 +56,21 @@ class CrossEncoderReranker:
         self._score_floor = score_floor
         self._model = None
 
-    def _ensure_model(self):
+    def _load_model_sync(self):
+        from sentence_transformers import CrossEncoder
+        # max_length matches bge-reranker-v2-m3's 8K training window; avoids
+        # silent truncation on passages that exceed 512 tokens.
+        return CrossEncoder(self._model_name, max_length=8192)
+
+    async def _ensure_model(self):
         if self._model is None:
-            from sentence_transformers import CrossEncoder
-            # max_length matches bge-reranker-v2-m3's 8K training window; avoids
-            # silent truncation on passages that exceed 512 tokens.
-            self._model = CrossEncoder(self._model_name, max_length=8192)
+            # Model init is CPU-bound (weight loading); run in a thread to
+            # avoid blocking the event loop on first use.
+            self._model = await asyncio.to_thread(self._load_model_sync)
         return self._model
 
     async def _score_pairs(self, pairs: list[tuple[str, str]]) -> list[float]:
-        model = self._ensure_model()
+        model = await self._ensure_model()
         # CrossEncoder.predict is CPU-bound; push it off the event loop.
         return await asyncio.to_thread(lambda: list(model.predict(pairs)))
 

@@ -64,10 +64,9 @@ class LocalEmbedder:
         model = SentenceTransformer(self._hf_model_name, device=self._device)
         # sentence-transformers 5.x renamed the method; keep a fallback for
         # 3.x/4.x so the dependency pin stays wide.
-        get_dim = (
-            getattr(model, "get_embedding_dimension", None)
-            or model.get_sentence_embedding_dimension
-        )
+        get_dim = getattr(model, "get_embedding_dimension", None)
+        if get_dim is None:
+            get_dim = model.get_sentence_embedding_dimension
         dim = get_dim()
         if dim != _EXPECTED_DIM:
             raise RuntimeError(

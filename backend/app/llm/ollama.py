@@ -74,13 +74,15 @@ class OllamaProvider:
             msg = response.json()["message"]
         tool_calls = msg.get("tool_calls") or []
         if tool_calls:
-            return (
-                None,
-                [
-                    {"name": call["function"]["name"], "arguments": call["function"]["arguments"]}
-                    for call in tool_calls
-                ],
-            )
+            parsed = []
+            for call in tool_calls:
+                fn = call.get("function") or {}
+                name = fn.get("name")
+                if not name:
+                    continue
+                parsed.append({"name": name, "arguments": fn.get("arguments") or {}})
+            if parsed:
+                return (None, parsed)
         return (msg.get("content"), [])
 
     async def stream(

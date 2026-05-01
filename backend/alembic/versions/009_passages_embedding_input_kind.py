@@ -19,6 +19,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # server_default is set only to backfill existing rows, then immediately
+    # removed so the application layer controls the value going forward.
     op.add_column(
         "passages",
         sa.Column(

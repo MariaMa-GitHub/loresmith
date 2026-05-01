@@ -156,7 +156,7 @@ class RAGPipeline:
                     top = reranked
             else:
                 top = fused[: self._final_top_k]
-                rerank_scores = []
+                rerank_scores = [h.rrf_score for h in top]
 
             passages = [
                 {
@@ -244,7 +244,8 @@ class RAGPipeline:
         identity = self._cache_identity()
         if self._cache is not None and revision is not None and identity is not None:
             _embed_fn = getattr(self._embedder, "embed_queries", self._embedder.embed)
-            q_embed: list[float] | None = (await _embed_fn([effective_question]))[0]
+            _embeddings = await _embed_fn([effective_question])
+            q_embed: list[float] | None = _embeddings[0] if _embeddings else None
         else:
             q_embed = None
 

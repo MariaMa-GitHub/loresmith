@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 
 from app.llm.base import LLMProvider
+
+logger = logging.getLogger(__name__)
 from app.rag.structured_output import VerifierVerdictSchema
 from app.tracing.langfuse import noop_tracer
 
@@ -76,7 +79,8 @@ class Verifier:
                         schema=VerifierVerdictSchema,
                         system=_SYSTEM_PROMPT,
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.warning("verifier abstained on complete_json failure: %s", exc)
                     span.set_output("abstained")
                     return VerifierVerdict(
                         is_faithful=False,
